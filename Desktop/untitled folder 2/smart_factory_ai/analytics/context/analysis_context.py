@@ -16,3 +16,7 @@ class AnalysisContext:
     health: dict | None = None
 
     risk: dict | None = None
+
+    recommendation: dict | None = None
+
+    alerts: list | None = None

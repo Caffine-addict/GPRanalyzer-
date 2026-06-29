@@ -10,10 +10,14 @@ from analytics.health.health_engine import HealthEngine
 
 from analytics.risk.risk_engine import RiskEngine
 
+from analytics.recommendation.recommendation_engine import RecommendationEngine
+
+from analytics.alerts.alert_engine import AlertEngine
 class AnalysisService:
 
     def __init__(self):
         self.health_engine = HealthEngine()
+
         self.risk_engine = RiskEngine()
 
         self.baseline_engine = BaselineEngine()
@@ -21,6 +25,10 @@ class AnalysisService:
         self.quality_engine = QualityEngine()
 
         self.drift_engine = DriftEngine()
+
+        self.recommendation_engine = RecommendationEngine()
+
+        self.alert_engine = AlertEngine()
 
     def build(self, event):
 
@@ -52,6 +60,12 @@ class AnalysisService:
         )
 
         context.risk = self.risk_engine.evaluate(
+            context
+        )
+        context.recommendation = self.recommendation_engine.evaluate(
+            context
+        )
+        context.alerts = self.alert_engine.evaluate(
             context
         )
         return context
