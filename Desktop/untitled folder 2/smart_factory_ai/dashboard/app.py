@@ -1,221 +1,87 @@
-import sys
-from pathlib import Path
-from services.alert_service import AlertService
-ROOT_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT_DIR))
-
-import pandas as pd
-import plotly.express as px
 import streamlit as st
-from services.fleet_service import FleetService
-from streamlit_autorefresh import st_autorefresh
-
-from services.feature_service import FeatureService
-from services.anomaly_service import AnomalyService
-from services.telemetry_service import TelemetryService
+from api import SmartFactoryAPI
 
 st.set_page_config(
     page_title="Smart Factory AI",
+    page_icon="🏭",
     layout="wide"
 )
 
-# Auto refresh every 5 seconds
-st_autorefresh(
-    interval=5000,
-    key="factory_refresh"
-)
+api = SmartFactoryAPI()
 
-st.title(" Smart Factory AI Dashboard")
+data = api.latest_analysis()
 
-feature = FeatureService.get_latest()
-events = AnomalyService.get_latest()
-telemetry = TelemetryService.get_latest(200)
+st.title("🏭 Smart Factory AI Dashboard")
 
-# -----------------------------
-# TOP KPIs
-# -----------------------------
+st.markdown("---")
 
-col1, col2, col3, col4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
 
-if feature:
-
-    health = feature.health_score
-
-    if health >= 90:
-        status = "NORMAL"
-    elif health >= 75:
-        status = "WARNING"
-    elif health >= 50:
-        status = "CRITICAL"
-    else:
-        status = "FAILURE"
-
-    col1.metric(
-        "Machine",
-        feature.machine_id
-    )
-
-    col2.metric(
+with c1:
+    st.metric(
         "Health Score",
-        round(feature.health_score, 2)
+        data["health"]["score"],
+        border=True
     )
 
-    col3.metric(
-        "Temperature",
-        round(feature.avg_temperature, 2)
+with c2:
+    st.metric(
+        "Risk Level",
+        data["risk"]["risk_level"],
+        border=True
     )
 
-    col4.metric(
-        "Status",
-        status
+with c3:
+    st.metric(
+        "Pass Rate",
+        f'{data["quality"]["pass_rate"]:.2f}%',
+        border=True
     )
 
-st.divider()
-
-# -----------------------------
-# HEALTH BAR
-# -----------------------------
-
-st.subheader("Machine Health")
-
-if feature:
-
-    st.progress(
-        min(int(feature.health_score), 100)
+with c4:
+    st.metric(
+        "Boards",
+        data["baseline"]["boards"],
+        border=True
     )
 
-    st.write(
-        f"Health Score: {feature.health_score:.2f}"
-    )
+st.markdown("---")
 
-# -----------------------------
-# TELEMETRY CHARTS
-# -----------------------------
+left, right = st.columns([2,1])
 
-st.subheader("Telemetry Trends")
+with left:
 
-if telemetry:
+    st.subheader("Recommendations")
 
-    rows = []
+    for rec in data["recommendation"]["recommendations"]:
+        st.success(rec)
 
-    for t in reversed(telemetry):
+with right:
 
-        rows.append(
-            {
-                "timestamp": t.timestamp,
-                "temperature": t.temperature,
-                "vibration": t.vibration,
-                "current": t.current,
-                "rpm": t.rpm
-            }
+    st.subheader("Alerts")
+
+    for alert in data["alerts"]:
+        st.error(
+            f'{alert["severity"]}\n\n{alert["message"]}'
         )
 
-    df = pd.DataFrame(rows)
+st.markdown("---")
 
-    c1, c2 = st.columns(2)
+st.subheader("System Status")
 
-    with c1:
+health = data["health"]["health"]
 
-        fig = px.line(
-            df,
-            x="timestamp",
-            y="temperature",
-            title="Temperature Trend"
-        )
+risk = data["risk"]["risk_level"]
 
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+quality = data["quality"]["status"]
 
-    with c2:
+col1, col2, col3 = st.columns(3)
 
-        fig = px.line(
-            df,
-            x="timestamp",
-            y="vibration",
-            title="Vibration Trend"
-        )
+with col1:
+    st.info(f"Machine Health : {health}")
 
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+with col2:
+    st.warning(f"Quality : {quality}")
 
-    c3, c4 = st.columns(2)
-
-    with c3:
-
-        fig = px.line(
-            df,
-            x="timestamp",
-            y="current",
-            title="Current Trend"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    with c4:
-
-        fig = px.line(
-            df,
-            x="timestamp",
-            y="rpm",
-            title="RPM Trend"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-# -----------------------------
-# ANOMALY TABLE
-# -----------------------------
-
-st.subheader("Recent Anomaly Events")
-
-rows = []
-
-for e in events:
-
-    rows.append(
-        {
-            "Machine": e.machine_id,
-            "Score": round(e.anomaly_score, 4),
-            "Prediction": e.prediction,
-            "Timestamp": e.timestamp
-        }
-    )
-
-if rows:
-
-    st.dataframe(
-        pd.DataFrame(rows),
-        use_container_width=True
-    )
-alerts = AlertService.get_open_alerts()
-st.subheader("Open Alerts")
-
-rows = []
-
-for a in alerts:
-
-    rows.append(
-        {
-            "Machine": a.machine_id,
-            "Severity": a.severity,
-            "Type": a.alert_type,
-            "Message": a.message,
-            "Status": a.status
-        }
-    )
-
-if rows:
-    st.dataframe(
-        pd.DataFrame(rows),
-        use_container_width=True
-    )
+with col3:
+    st.error(f"Risk : {risk}")

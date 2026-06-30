@@ -4,13 +4,18 @@ from machine_types.ict.event_repository import ICTEventRepository
 
 from analytics.context.analysis_service import AnalysisService
 
+from api.models.analysis_response import AnalysisResponse
+
 router = APIRouter(
     prefix="/analysis",
     tags=["Analysis"]
 )
 
 
-@router.get("/latest")
+@router.get(
+    "/latest",
+    response_model=AnalysisResponse
+)
 def latest_analysis():
 
     repo = ICTEventRepository()
