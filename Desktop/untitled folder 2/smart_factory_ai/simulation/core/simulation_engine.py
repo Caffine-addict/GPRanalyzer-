@@ -1,4 +1,8 @@
+from simulation.bus.event_bus import EventBus
+
 from simulation.generators.production_generator import ProductionGenerator
+
+from simulation.subscribers.logger import LoggerSubscriber
 
 
 class SimulationEngine:
@@ -7,6 +11,32 @@ class SimulationEngine:
 
         self.production = ProductionGenerator()
 
+        self.bus = EventBus()
+
+        self.bus.subscribe(
+
+            "board_created",
+
+            LoggerSubscriber()
+
+        )
+
     def produce(self):
 
-        return self.production.next_board()
+        board = self.production.next_board()
+
+        self.bus.publish(
+
+            "board_created",
+
+            {
+
+                "event": "board_created",
+
+                "board": board
+
+            }
+
+        )
+
+        return board

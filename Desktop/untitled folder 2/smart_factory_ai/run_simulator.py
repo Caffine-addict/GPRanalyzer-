@@ -1,19 +1,22 @@
 from simulation.core.factory_simulator import FactorySimulator
+
 from simulation.core.simulation_engine import SimulationEngine
 
+
 factory = FactorySimulator()
+
 factory.start()
 
 engine = SimulationEngine()
 
 print()
 
-print("Starting Production")
+print("=" * 60)
 
-print("-" * 40)
+print("PRODUCTION STARTED")
+
+print("=" * 60)
 
 for _ in range(10):
 
-    board = engine.produce()
-
-    print(board)
+    engine.produce()
