@@ -13,10 +13,10 @@ print()
 
 print("=" * 60)
 
-print("PRODUCTION STARTED")
+print("LIVE PRODUCTION")
 
 print("=" * 60)
 
-for _ in range(10):
+for _ in range(5):
 
     engine.produce()

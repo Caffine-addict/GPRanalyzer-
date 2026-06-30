@@ -2,20 +2,37 @@ from simulation.bus.event_bus import EventBus
 
 from simulation.generators.production_generator import ProductionGenerator
 
+from simulation.pipeline.machine_pipeline import MachinePipeline
+
 from simulation.subscribers.logger import LoggerSubscriber
 
+from simulation.core.factory_loader import FactoryLoader
+
+from simulation.subscribers.analytics_subscriber import AnalyticsSubscriber
 
 class SimulationEngine:
 
     def __init__(self):
 
+        self.bus = EventBus()
+
         self.production = ProductionGenerator()
 
-        self.bus = EventBus()
+        self.pipeline = MachinePipeline()
+
+        self.factory = FactoryLoader.load(
+            "simulation/config/default_factory.json"
+        )
+        self.bus.subscribe(
+
+            "board_processed",
+            AnalyticsSubscriber()
+
+        )
 
         self.bus.subscribe(
 
-            "board_created",
+            "board_processed",
 
             LoggerSubscriber()
 
@@ -25,18 +42,26 @@ class SimulationEngine:
 
         board = self.production.next_board()
 
-        self.bus.publish(
+        line = self.factory.lines[0]
 
-            "board_created",
+        for station in line.stations:
 
-            {
+            station.machine.start()
 
-                "event": "board_created",
+            event = self.pipeline.process(
 
-                "board": board
+                station.machine,
 
-            }
+                station,
 
-        )
+                board
 
-        return board
+            )
+
+            self.bus.publish(
+
+                "board_processed",
+
+                event
+
+            )

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 
+from simulation.state.machine_state import MachineState
+
 
 @dataclass
 class Machine:
 
     name: str
 
-    status: str = "READY"
+    state: MachineState = MachineState.READY
 
     health: float = 100.0
 
@@ -14,16 +16,18 @@ class Machine:
 
     defect_rate: float = 0.0
 
-    running: bool = False
+    processed_boards: int = 0
 
     def start(self):
 
-        self.running = True
-
-        self.status = "RUNNING"
+        self.state = MachineState.RUNNING
 
     def stop(self):
 
-        self.running = False
+        self.state = MachineState.IDLE
 
-        self.status = "STOPPED"
+    def process_board(self):
+
+        self.processed_boards += 1
+
+        self.throughput += 1

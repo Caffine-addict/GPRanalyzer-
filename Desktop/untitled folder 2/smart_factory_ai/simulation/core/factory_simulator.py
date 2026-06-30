@@ -31,7 +31,7 @@ class FactorySimulator:
 
                 print(
                     f"{station.machine.name:<10}"
-                    f"{station.machine.status}"
+                    f"{station.machine.state.value}"
                 )
 
         print()
