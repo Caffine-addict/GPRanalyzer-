@@ -1,16 +1,16 @@
 from statistics import mean
 from statistics import median
 from statistics import pstdev
-
+from analytics.machine.common.base_engine import BaseAnalyticsEngine
 from analytics.baseline.baseline_repository import (
     BaselineRepository,
 )
 
 
-class BaselineEngine:
+class BaselineEngine(BaseAnalyticsEngine):
 
     def __init__(self):
-
+        super().__init__()
         self.repo = BaselineRepository()
 
     def build(
@@ -76,3 +76,8 @@ class BaselineEngine:
             "median_margin": median(margins)
 
         }
+    def analyze(self, board_family):
+        """
+        Standard interface required by BaseAnalyticsEngine.
+        """
+        return self.build(board_family)
