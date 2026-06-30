@@ -1,20 +1,19 @@
-from edge.simulators.machine_simulator import MachineSimulator
-import time
+from simulation.core.factory_simulator import FactorySimulator
+from simulation.core.simulation_engine import SimulationEngine
 
-machines = [
-    MachineSimulator("M001"),
-    MachineSimulator("M002"),
-    MachineSimulator("M003")
-]
+factory = FactorySimulator()
+factory.start()
 
-while True:
+engine = SimulationEngine()
 
-    for machine in machines:
+print()
 
-        data = machine.generate_data()
+print("Starting Production")
 
-        machine.save_to_db(data)
+print("-" * 40)
 
-        print(data)
+for _ in range(10):
 
-    time.sleep(5)
+    board = engine.produce()
+
+    print(board)
