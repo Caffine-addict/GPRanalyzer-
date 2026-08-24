@@ -1,245 +1,68 @@
-# GPR B-Scan Analysis Pipeline
+# gpr-analyzer
 
-Automated Ground Penetrating Radar (GPR) B-Scan analysis system combining YOLOv8 object detection, pseudo-labeling for fine-grained classification, and Large Language Models (Gemma 4) for technical report generation.
+An end-to-end pipeline for Ground Penetrating Radar (GPR) B-scan analysis:
+YOLOv8 detection over a 9-class subsurface-feature taxonomy, evidence
+extraction with honest confidence labelling, weighted risk scoring, and
+LLM-generated findings (what/where/why/how + recommended action), streamed
+live to operator/manager/PM dashboards and rolled up into an end-of-survey
+PDF report.
 
-## Overview
+Everything upstream of `sources/` and `parsers/` is written against a small
+set of contracts (`ScanFrame`, `SourceCapabilities`, the `ScanSource` ABC) and
+does not know or care where frames come from. Three sources share that
+interface: `replay` (plays back a folder of files at survey speed — this is
+what the whole system develops and tests against, no hardware required),
+`edge_gateway` (a device that pushes/streams to a local gateway), and
+`direct_device` (reading straight off the device). The latter two are wired
+into the source factory but not yet implemented — see `CLAUDE.md` for why.
 
-This project presents a complete end-to-end pipeline for GPR B-scan analysis achieving **82.2% mAP50** on 9-class fine-grained classification. The system operates entirely locally ensuring data privacy while providing real-time inference capability.
+## Running it
 
-## Technology Stack
-
-### Core Technologies
-- **YOLOv8n**: Nano-scale object detection model (3.2M parameters, 6.2MB)
-- **OpenCV**: Image preprocessing (median filtering, CLAHE enhancement)
-- **Streamlit**: Web interface for interactive analysis
-- **Ollama**: Local LLM runtime for Gemma 4 (9.6GB model)
-- **PyTorch**: Deep learning framework with MPS backend for Apple Silicon
-- **Ultralytics**: YOLOv8 implementation
-- **scikit-learn**: K-Means clustering for pseudo-labeling
-- **ResNet18**: Feature extraction for pseudo-labeling
-
-### Development Environment
-- **Platform**: macOS (Apple M4 chip with MPS acceleration)
-- **Language**: Python 3.8+
-- **Package Management**: Virtual environment (venv)
-
-## Project Structure
-
-```
-gpr-analysis/
-├── gpr_streamlit.py          # Main Streamlit web application
-├── gpr_app.py               # Alternative Gradio interface (deprecated)
-├── tools/
-│   ├── voc_to_yolo.py       # Convert Pascal VOC annotations to YOLO format
-│   ├── denoise_image.py      # Image preprocessing (median + CLAHE)
-│   ├── predict_yolo.py       # YOLO inference script
-│   ├── pseudo_label_utilities.py  # Pseudo-labeling pipeline
-│   ├── materialize_pseudo_labels_yolo.py  # Apply pseudo-labels to dataset
-│   └── generate_report.py    # LLM report generation
-├── generate_training_plot.py   # Training metrics visualization
-├── generate_loss_plot.py      # Loss curves visualization
-├── generate_detection_examples.py  # Detection examples for papers
-├── generate_comparison_chart.py    # Comparative analysis charts
-├── generate_architecture_diagram.py  # System architecture diagrams
-└── requirements.txt           # Python dependencies
-```
-
-## Installation
-
-### Prerequisites
-- Python 3.8 or higher
-- Apple M-series chip (for MPS acceleration) or CUDA-compatible GPU
-- Ollama installed locally
-
-### Setup
+This is developed on macOS but is meant to run on whatever machine the
+company deploys it on (Windows or Linux, not yet confirmed) — everything is
+kept OS-agnostic on purpose: `pathlib` throughout (no hardcoded path
+separators or absolute paths), no forced compute device (torch/ultralytics
+auto-detect CUDA/CPU; no macOS-only MPS assumption anywhere), and only
+dependencies with cross-platform wheels.
 
 ```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv sync --extra dev          # or: pip install -e ".[dev]"
+cp .env.example .env         # fill in GROQ_API_KEY
 
-# Install dependencies
-pip install -r requirements.txt
+# activate the venv directly if not using `uv run`:
+source .venv/bin/activate    # macOS/Linux
+.venv\Scripts\activate       # Windows
 
-# Install Ollama and pull Gemma 4
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma4:latest
+pytest                       # should collect (and, once sessions land, pass)
 ```
 
-## Workflow
+Source, thresholds, and the reasoning model are all config-driven — see
+`config.yaml`. Switching from replay to a real source later is a config
+change, not a code change.
 
-### 1. Data Preparation
+### Running the API server
+
 ```bash
-# Convert VOC annotations to YOLO format
-python tools/voc_to_yolo.py --input .tmp/gpr_data/GPR_data/ \\
-                                    --output .tmp/yolo_dataset/
-
-# Apply pseudo-labels for fine-grained classification
-python tools/materialize_pseudo_labels_yolo.py \\
-       --cluster-mapping output/pseudo_labels/cluster_mapping.json \\
-       --input .tmp/yolo_dataset/ \\
-       --output .tmp/yolo_dataset_fine/
+.venv/bin/python -m uvicorn api.server:app --reload   # default: http://127.0.0.1:8000
+.venv\Scripts\python -m uvicorn api.server:app --reload   # Windows
 ```
 
-### 2. Training
+REST endpoints under `/surveys` and `/lines`, plus a `/ws/live` WebSocket
+feed of `finding.created`/`finding.reasoned` events. No auth today — see
+`CLAUDE.md` for the accepted internal-tool trust model this assumes.
+
+### Running the dashboard
+
 ```bash
-from ultralytics import YOLO
-
-# Load YOLOv8n model
-model = YOLO('yolov8n.pt')
-
-# Train on custom dataset
-results = model.train(
-    data='.tmp/yolo_dataset_fine/gpr_fine.yaml',
-    epochs=30,
-    imgsz=224,
-    batch=32,
-    device='mps',  # or 'cuda', 'cpu'
-    optimizer='Adam',
-    lr0=0.01,
-    conf=0.25,
-    iou=0.7
-)
-
-# Validate
-metrics = model.val()
-print(f"mAP50: {metrics.box.map50}")
+cd dashboard
+npm install
+npm run dev                  # http://localhost:5173, proxies to the API at
+                              # VITE_API_BASE_URL (defaults to http://127.0.0.1:8000)
+npm test                     # Vitest unit tests
+npm run build                # production build (tsc + vite build)
 ```
 
-### 3. Inference
-```bash
-# Run detection on single image
-python tools/predict_yolo.py \\
-    --model runs/detect/output/yolo/fine_k8_more30/weights/best.pt \\
-    --image .tmp/gpr_data/GPR_data/Utilities/008.jpg \\
-    --conf 0.25
-
-# Run Streamlit web interface
-streamlit run gpr_streamlit.py --server.port 7860
-```
-
-### 4. Report Generation
-The system uses Gemma 4 via Ollama to generate detailed technical reports:
-
-```python
-import ollama
-
-response = ollama.chat(
-    model='gemma4:latest',
-    messages=[{
-        'role': 'user',
-        'content': """Analyze this GPR B-scan image with detected objects:
-        - Image: [base64 encoded denoised image]
-        - Detections: [JSON with bounding boxes, labels, confidence]
-        
-        Generate a technical report including:
-        1. Subsurface feature classification
-        2. Depth and position estimates
-        3. Signal quality assessment
-        4. Risk implications
-        5. Recommendations"""
-    }]
-)
-print(response['message']['content'])
-```
-
-## Pseudo-Labeling Pipeline
-
-Fine-grained classification is achieved through unsupervised clustering:
-
-1. **Crop Utility Regions**: Extract bounding boxes from coarse "Utility" labels
-2. **Feature Extraction**: ResNet18 embeddings (512-dimensional vectors)
-3. **Dimensionality Reduction**: PCA to 50 components
-4. **Clustering**: K-Means with k=8
-5. **Manual Labeling**: Domain experts assign semantic labels to clusters
-6. **Label Regeneration**: Update YOLO labels with 9-class taxonomy
-
-Resulting classes:
-- cavities
-- clear_point_reflector
-- strong_high_contrast_reflector
-- multiple_point_reflectors
-- elongated_linear_target
-- intersecting_linear_and_point_reflector
-- disturbed_zone
-- cluttered_multi_target
-- low_snr_point_reflector
-
-## Performance Metrics
-
-### Best Model (Epoch 25)
-| Metric | Value |
-|--------|-------|
-| Precision | 76.5% |
-| Recall | 76.1% |
-| mAP50 | **82.2%** |
-| mAP50-95 | 56.9% |
-| Inference Time | 0.12s/image |
-| Model Size | 6.2 MB |
-
-### Comparative Analysis
-| Method | mAP50 | Inference (s) | Params (M) |
-|--------|-------|--------------|------------|
-| **Proposed (YOLOv8n)** | **82.2%** | **0.12** | **3.2** |
-| Faster R-CNN | 77.8% | 0.35 | 41.3 |
-| YOLOv3 | 71.4% | 0.22 | 61.5 |
-| SSD MobileNet | 68.2% | 0.08 | 6.8 |
-| RetinaNet | 75.6% | 0.28 | 36.2 |
-| Custom CNN | 68.2% | 0.45 | 11.2 |
-
-## Key Features
-
-- **Privacy-Preserving**: All processing local, no data leaves user's machine
-- **Real-Time Inference**: 0.12s per image for detection
-- **Fine-Grained Classification**: 9-class taxonomy via pseudo-labeling
-- **Automated Reporting**: LLM-generated technical reports
-- **Interactive UI**: Streamlit web interface with drag-and-drop
-- **Cross-Platform**: Runs on macOS, Linux, Windows
-
-## Dataset
-
-- **Original**: 285 GPR B-scan images (JPEG, 224x224)
-- **Augmented**: 2,239 images using RandAugment
-- **Total**: 2,524 images (80/20 train/val split)
-- **Classes**: 9 fine-grained categories
-- **Format**: Pascal VOC XML → YOLO txt conversion
-
-## Training Configuration
-
-```yaml
-# YOLOv8 training config
-model: yolov8n.pt
-data: gpr_fine.yaml
-epochs: 30
-imgsz: 224
-batch: 32
-optimizer: Adam
-lr0: 0.01
-lrf: 0.0001
-conf: 0.25
-iou: 0.7
-device: mps  # Apple Silicon GPU
-```
-
-## Results Visualization
-
-Training metrics and detection examples are available in the `paper_images/` directory (not included in this repo - see paper for details).
-
-## Applications
-
-- Construction site safety assessment
-- Utility mapping and buried services detection
-- Archaeological investigation
-- Road and bridge infrastructure inspection
-- Environmental remediation
-
-## Contributors
-
-- **Pritam Wani** - Lead Developer
-- **Sucheta Rout** - Co-Developer  
-- **Prof. Sahil Pocker** - Supervisor
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
+Three role views (`/operator`, `/manager`, `/pm`) — see `dashboard/src/views/`.
+Set `VITE_API_BASE_URL` in `dashboard/.env` if the API isn't on the default
+host/port. This is a separate npm project, not part of the Python package —
+run the API server first so the dashboard has something to talk to.

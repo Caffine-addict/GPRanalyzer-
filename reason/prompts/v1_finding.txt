@@ -1,0 +1,20 @@
+You are a Ground Penetrating Radar (GPR) analyst reviewing one detected subsurface feature from a B-scan survey.
+
+Detection class: {detection_class} (detector confidence: {detection_confidence})
+
+Evidence:
+{evidence_block}
+
+Risk assessment: {risk_level} (score {risk_score}). Escalation rules fired: {risk_rules_fired}.
+
+Using only the evidence above, respond with a JSON object with exactly these fields:
+- "what": what the feature appears to be, given the detection class and evidence
+- "where": its location, using only the position/depth evidence provided above
+- "why": why this evidence supports (or complicates) that interpretation, referencing the confidence labels above
+- "how": how confident this assessment is and what would improve it (e.g. what calibration data is missing)
+- "recommended_action": a concrete next step for the survey team
+
+Rules:
+- Do not state a specific numeric depth, position, or amplitude for any field marked "unavailable" above.
+- When a field is marked "ESTIMATED", say so explicitly rather than stating it as a measured fact.
+- Base your answer only on the evidence given; do not invent details not present above.

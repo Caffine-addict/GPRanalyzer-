@@ -1,0 +1,112 @@
+# gpr-analyzer configuration.
+# No defaults live in code — core/config.py fails loudly on anything missing here.
+
+detection:
+  weights_path: "weights/best.pt"
+  conf_threshold: 0.25
+  iou_threshold: 0.7
+  classes:
+    - cavities
+    - elongated_linear_target
+    - intersecting_linear_and_point_reflector
+    - strong_high_contrast_reflector
+    - multiple_point_reflectors
+    - low_snr_point_reflector
+    - cluttered_multi_target
+    - disturbed_zone
+    - clear_point_reflector
+
+enhancement:
+  bilateral_d: 5
+  bilateral_sigma: 75
+  clahe_clip_limit_max: 4.0
+  clahe_clip_divisor: 32
+  clahe_tile_grid_size: 8
+  nlmeans_enabled: false
+  nlmeans_h: 10.0
+  nlmeans_template_window: 7
+  nlmeans_search_window: 21
+
+risk:
+  weights:
+    elongated_linear_target: 1.0
+    cavities: 0.9
+    low_snr_point_reflector: 0.4
+  # Classes not listed above (the taxonomy has 9; only 3 have explicit
+  # weights from the original brief) fall back to this weight rather than
+  # raising KeyError at runtime.
+  default_weight: 0.2
+  thresholds:
+    low_max: 0.35
+    medium_max: 0.65
+  escalation:
+    # The original escalation rule was "cavities + utilities together ->
+    # HIGH", written against an older coarse taxonomy that had a single
+    # "Utility" class. The current 9-class taxonomy has no such class — it
+    # was split into finer-grained linear/reflector classes during
+    # pseudo-labelling (see docs/PRIOR_ART.md). These are the classes judged
+    # closest to "utility-like buried linear infrastructure" under the new
+    # taxonomy; adjust here, not in code, if that judgement call is wrong.
+    utility_classes:
+      - elongated_linear_target
+      - intersecting_linear_and_point_reflector
+    high_confidence_elongated_threshold: 0.8
+    high_confidence_elongated_min_count: 2
+
+evidence:
+  # Fallback for the depth "estimated" tier (no calibrated sample_interval_ns
+  # / dielectric_assumed available): bbox vertical position, as a fraction of
+  # frame height, scaled by this assumed full-frame depth. Purely a labelled
+  # assumption — see evidence/extract.py — never used when real calibration
+  # data is present.
+  assumed_max_depth_m: 2.0
+
+reasoning:
+  provider: groq
+  model: "openai/gpt-oss-120b"
+  fallback_model: "openai/gpt-oss-20b"
+  temperature: 0.2
+  max_tokens: 1024
+  timeout_s: 20
+  strict_json: true
+  prompt_version: v1_finding
+
+source:
+  type: replay
+  replay:
+    directory: ".tmp/replay_fixtures"
+    playback_rate_hz: 2.0
+    step_mode: false
+  edge_gateway:
+    host: "127.0.0.1"
+    port: 1883
+    protocol: "mqtt"
+    topic: "gpr/frames"
+    # NOTE: placeholder values. Real protocol/topic/auth arrive once the
+    # company confirms the edge device. sources/edge_gateway.py raises
+    # NotImplementedError until then — do not implement against guesses.
+  direct_device:
+    export_directory: ".tmp/device_export"
+    poll_interval_s: 1.0
+    # NOTE: placeholder. Real export format/location arrives with device specs.
+
+latency:
+  fast_path_target_ms: 500
+  reasoning_target_ms: 5000
+
+store:
+  backend: duckdb
+  path: "output/gpr.duckdb"
+
+api:
+  # Origins allowed to make cross-origin requests to api/server.py — the
+  # dashboard (dashboard/) runs on its own origin (separate Vite dev
+  # server / static host). No auth exists anywhere in this API, so this is
+  # not a defense-in-depth nicety: it's the only thing standing between an
+  # unrelated webpage the operator's browser visits and this API. Keep this
+  # to actual known dashboard origins, never "*" — see core/config.py's
+  # ApiConfig docstring. Add the deployed dashboard's real origin here once
+  # it's not just localhost dev.
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"

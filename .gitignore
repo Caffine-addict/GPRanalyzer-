@@ -1,107 +1,37 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 *.egg-info/
-*.egg
-dist/
-build/
-eggs/
-parts/
-bin/
-var/
-sdist/
-develop-eggs/
-.installed.cfg
-lib/
-lib64/
 .eggs/
-src/*.egg-info/
-venv/
-ENV/
+build/
+dist/
 .venv/
-*.egg-info/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# PyTorch/ML
-*.pth
+# Secrets
+.env
+
+# Weights / model artifacts
+weights/
 *.pt
+*.pth
 *.onnx
-*.pb
-*.h5
-checkpoints/
 runs/
-wandb/
-mlruns/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# Data / working directories
+.tmp/
+data/
+output/
+*.duckdb
+
+# Dashboard
+dashboard/**/node_modules/
+dashboard/**/dist/
 
 # OS
 .DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
-
-# IDE
-.vscode/
-.idea/
-*.sublime-*
-.settings/
-.project
-.pydevproject
-
-# Project specific - DO NOT COMMIT
-# Papers and reports
-*.tex
-*.pdf
-*.docx
-*.bib
-*.aux
-*.log
-*.out
-*.toc
-*.lof
-*.lot
-Project_Report/
-IEEE_Paper/
-Gen_AI_*/
-
-# Images
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.tiff
-*.ico
-images/
-paper_images/
-
-# Temp files
-.tmp/
-temp/
-tmp/
-*.tmp
-
-# Ollama models (too large)
-*.gguf
-*.ggml
-
-# Log files
-*.log
-
-# Large data files
-*.csv
-*.json
-!requirements.txt
-!cluster_mapping.json
-
-# Model outputs (large)
-output/
-runs/
-*.pt
-*.pth
-weights/
