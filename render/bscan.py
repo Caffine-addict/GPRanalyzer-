@@ -52,4 +52,11 @@ def traces_to_image(traces: np.ndarray) -> np.ndarray:
         scaled = np.clip((traces - lo) / (hi - lo), 0.0, 1.0)
         normalised = (scaled * 255).astype(np.uint8)
 
-    return cv2.resize(normalised, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_LINEAR)
+    # Radargram orientation: time runs down the image, distance across it — the way a
+    # B-scan is read and the way B-scan image files arrive through parsers/image.py.
+    # `traces` is (n_traces, n_samples), so it has to be transposed first; resizing it
+    # as-is drew time *across* the image, and a detector would have seen hyperbolas
+    # opening sideways on trace-rendered frames but downward on image-file frames.
+    # Caught and fixed before any detector was trained on either.
+    upright = np.ascontiguousarray(normalised.T)
+    return cv2.resize(upright, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_LINEAR)

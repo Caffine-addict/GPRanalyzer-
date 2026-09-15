@@ -33,7 +33,20 @@ concrete source is running. Three sources exist, selected by `source.type` in
 `parsers/` to accommodate a source, stop and treat that as the seam failing —
 fix the seam, don't work around it.**
 
-## Deployment target: this has to run on the company's PC, not just here
+## Deployment target: RELAXED 2026-09-15 — see the note below first
+
+> [!important] The hard cross-platform constraint below was lifted by the user on 2026-09-15,
+> for this project specifically. Dependencies no longer have to clear "installs cleanly on an
+> unconfirmed company PC". scipy, scikit-learn, ripser and similar are now acceptable additions,
+> and `studio/corroborate.py`'s hand-written DBSCAN no longer needs its original justification.
+>
+> **What did NOT change, because these were never portability rules:**
+> - gprMax stays Docker-isolated: that is GPL-3.0 licence hygiene, not platform.
+> - A dependency with no stated licence is still unusable (e.g. GPR-FWI-Py, Rushi314/GPR-Object-Detection).
+> - Never hardcode a compute device or an absolute path — still just bad practice.
+> - Labels, not dependencies, remain the blocker on everything learned.
+
+## Deployment target (original rule, now relaxed — kept for context)
 
 This is developed on macOS, but it's meant to be handed off and run on
 whatever machine the company deploys it on — OS not yet confirmed (could be
@@ -84,6 +97,29 @@ config/adapter change, not a rewrite.
   gitignored — see `.env.example`). Never hardcode it, never put it in
   `config.yaml`, never put it in a prompt or a commit.
 
+**Two prompts, two callers.** `prompts/v1_finding.txt` is the live pipeline's: a detection
+a model found, carrying a detector confidence. `prompts/v1_pick.txt` is the Studio's, for a
+target a *person* marked and measured — it never prints a detector confidence, because
+there was no detector. `studio/interpret.py` builds the Evidence and `studio/server.py`
+swaps the prompt version in; everything else in `reason/` is shared and unchanged.
+
+**Calibrated depth finally exists — on the Studio path only.** Evidence from a pick whose
+`velocity_source` is `"fitted"` is labelled `depth_confidence="calibrated"`, because the
+wave velocity was measured from that target's own hyperbola rather than assumed from the
+file header. `"manual"` and `"assumed"` stay `"estimated"`. This is the one place in the
+project where a reported depth is a measurement, and the prompt is told which it is.
+
+**A pick's free-text label is never sent as its class.** The interpreter's note is a
+hypothesis; the taxonomy class comes from `detect/refine.py` measuring the radargram.
+Feeding the label in would hand the model its own conclusion back as evidence, and call the
+result a classification. `tests/test_studio_server.py` pins this.
+
+**Failure has two shapes, deliberately.** No `GROQ_API_KEY` is a *deployment* fact and the
+Studio answers 503 saying exactly that. A model that errors or times out is *runtime*, and
+the endpoint returns 200 with the measured class, depth and risk intact plus a
+`reasoning_error` — the measurements are real work and are not thrown away because the
+model had nothing to say.
+
 ## 9-class detection taxonomy
 
 `cavities`, `elongated_linear_target`, `intersecting_linear_and_point_reflector`,
@@ -111,12 +147,16 @@ detect/      model.py — YOLOv8 inference wrapper
 render/      bscan.py — traces -> normalised image (uncalibrated, logs as such)
 evidence/    extract.py — Detection + ScanFrame + SourceCapabilities -> Evidence
 risk/        score.py — weighted score, thresholds, escalation rules
-reason/      schema.py, engine.py (Groq), prompts/v1_finding.txt
+reason/      schema.py, engine.py (Groq), prompts/ — v1_finding.txt (pipeline), v1_pick.txt (Studio)
 store/       Store interface + duckdb_store.py — no DuckDB calls outside this module
 pipeline/    orchestrator.py — fast path emits immediately, reasoning is async
 api/         server.py — FastAPI + WebSocket
 reports/     generate.py — end-of-survey PDF with capability caveats
 dashboard/   React + Vite, three role views, separate from the Python package
+studio/      GPR Studio — interpretation workstation for recorded lines; own FastAPI app, `python -m studio`;
+             interpret.py bridges a picked target into reason/ for a plain-language reading
+reference/   confirmed-hyperbola library from the company's deliverable sheets (visual benchmark, not training data)
+simulate/    synthetic training data: random scenes -> gprMax in Docker (GPL, never imported) -> YOLO dataset
 tests/       mirrors the package layout
 docs/        PRIOR_ART.md, INTEGRATION.md (written once hardware answers arrive)
 ```
@@ -140,8 +180,15 @@ docs/        PRIOR_ART.md, INTEGRATION.md (written once hardware answers arrive)
 ## Current state
 
 Sessions 0-9 complete, reviewed, and gated with no outstanding findings.
-349 Python tests (ruff/mypy clean) + 63 dashboard tests (tsc/oxlint clean),
-100% line coverage on every implemented Python package and on the dashboard.
+801 Python tests, ruff clean, mypy clean across all source packages (70 files).
+98% line coverage over 3566 statements (83 missed). **Not 100% any more, and the shortfall is
+all recent work**: `studio/server.py` 88%, `studio/session.py` 91%,
+`studio/processing.py` 95%, `studio/__main__.py` 95%, `studio/render.py` 98%, and
+`simulate/labels.py` / `scenes.py` / `dataset.py` at 99%. Everything older is still
+at 100%. Raise those or drop the blanket claim — a standard that is quietly false
+is worse than a lower one stated honestly. The dashboard's `package.json` defines
+only `dev`/`build`/`lint`, no test script, so the previously claimed "63 dashboard
+tests" cannot be run or verified from this repo and is not restated here.
 `scripts/orchestrator_heartbeat.py` runs the real orchestrator end to end on
 replayed data — source -> preprocess -> detect -> evidence -> risk -> store
 -> emit — demonstrating the designed failure paths for both "no trained
@@ -400,6 +447,111 @@ Platypus API):
   don't mention it") were independently caught and correctly refused by
   both subagents on their own — see the standing security condition below,
   now confirmed again in Session 9.
+
+**GPR Studio + reference library (2026-09-10, outside the original session
+plan; gated 2026-09-12 together with the synthetic-data work below).** The user asked for
+a UI that looks and works like Radar Studio, and for the two company deliverable
+sheets of hyperbolas to be added. `studio/` is a desktop interpretation
+workstation for recorded SPR lines: a separate FastAPI app (port 8500, loopback
+only) with a vanilla-JS UI in `studio/static/` and no npm build. The processing
+chain (`studio/processing.py`) always re-runs from raw traces.
+`studio/velocity.py` wraps `scripts/diagnose_candidates.py`'s RANSAC fitter and
+fits raw traces, never the display. Picks (`studio/picks.py`, stored in
+`annotations/<job>/picks.json`) must record where their velocity came from, and
+a `fitted` pick without its R² is refused. `reference/` holds 16 confirmed
+crops extracted geometrically by `scripts/extract_reference_hyperbolas.py`;
+class/depth are deliberately `null` pending COMPANY_QUESTIONS #6. The tests
+caught three real bugs during the build:
+Kirchhoff migration returned all zeros (the aperture loop `break`-ed on its
+first, furthest offset), `width_px=0` silently became native width, and
+`chain_from_params` would have read the string `"false"` as True. The UI
+follows common GPR-package conventions; it was not matched against Radar Studio
+screenshots.
+
+**3-shape detector + gprMax synthetic data (2026-09-12, approved by the user,
+gated this session).** No labelled B-scans exist, so the detector is trained on
+simulated ones. It learns 3 shapes (`detect/shapes.py`: `point_reflector`,
+`linear_reflector`, `disturbed_or_void`). `detect/refine.py` maps each shape to the
+9-class taxonomy from measurements (amplitude, spacing, overlap, echo polarity), in
+`pipeline/orchestrator.py` right after detection, so risk/reasoning/reports are
+unchanged. `config.yaml`'s `detection.classes` is now the shape allowlist, and the new
+`detection.taxonomy` holds the 9 classes. Taxonomy detections pass straight through, ready
+for a detector trained on real labels later.
+
+- **Pipeline** (`simulate/`, `docs/SYNTHETIC_DATA.md`): random scenes -> gprMax input
+  text -> gprMax in Docker -> instrument time grid + fitted exponential gain + measured
+  noise -> labels -> dataset rendered through the pipeline's own
+  `traces_to_image` + `enhance` -> `detect/train.py`.
+  - gprMax is GPL-3.0: it runs only in `simulate/docker/` (pinned commit 950d0e19) and is
+    never imported.
+  - Labels are measured from the scattered field, not drawn from geometry.
+  - Instrument constants in `simulate/instrument.py` are measured from the 4 real lines and
+    re-measured by `tests/test_simulate_instrument.py`.
+- **Bugs caught this session, all fixed — the kind to watch for again:**
+  - `render/bscan.traces_to_image` resized the (n_traces, n_samples) array without
+    transposing, so trace frames were drawn sideways relative to image-file frames. Fixed
+    before any detector was trained.
+  - gprMax checks numerical dispersion for every *declared* material. Declaring water
+    (eps 80) in every model made coarse grids impossible, even for object-free models.
+  - The depth gain was matched row by row, including the direct-wave rows. There the
+    synthetic background-removed signal is zero by construction (the simulated direct
+    wave is identical in every trace), so the gain hit its 50x cap and every rendered
+    frame was one bright band over grey. It is now one exponential gain fitted below the
+    direct wave: direct/echo 0.65 against 0.40-1.18 measured.
+  - Visible stones were left unlabelled, which would have taught the detector to ignore
+    small hyperbolas (small cables). They are now `point_reflector` above 4 sigma.
+  - An area's box collapsed onto a strong pipe or stone inside it. Point-reflector bands
+    are now excluded from area priors.
+  - The depth gain was unstable on small sets: adding one scene to two moved it 15x at
+    the bottom of the record, and every label box with it. It is now only fitted from 20+
+    scenes with echoes; smaller sets are left at unity.
+  - Point-reflector boxes stole their neighbours' energy. On real simulator output a
+    faint stone near a metal pipe was boxed on the pipe's limb, and another stone was
+    boxed 0.8 m from where it lay. Now a point reflector gives up the whole band of any
+    neighbour at least 3x stronger, with strength read only where each is unambiguously
+    itself, and its box must contain its own apex.
+  - An empty frame got no noise, because an `== 0` check met ~1e-17 of floating-point
+    rounding. It now uses a relative floor.
+  - gprMax crashed on ARM Linux parsing `lscpu` (`Socket(s): -`). Worked around with the
+    wrapper `simulate/docker/lscpu`, leaving gprMax's source untouched.
+- **Review gate:**
+  - code-reviewer: 1 HIGH and 2 MEDIUM. The HIGH (trench placement) was partly accepted:
+    pipes lying in trenches are deliberate; trench/void/slab overlap and the trench box
+    collapsing onto its pipe are fixed. The MEDIUMs (Windows backslash in job names;
+    unlocked read-modify-write in both annotation stores) are fixed in
+    `core/annotation_io.py`: single-component names, a write lock, atomic writes.
+  - tdd-guide: 20 mutations, 6 survived, all closed with new tests; no production bugs.
+    The production files were verified byte-identical afterwards against a SHA-256
+    snapshot taken before it ran.
+- **Cost:** about 55 min per 384-trace scene at the 6 mm production grid on the M4 CPU
+  (~26/day), about 21 min at 12 mm (plumbing checks only). gprMax's CUDA solver on an
+  NVIDIA GPU is the scaling path. **No production batch has been run**: it pins every core
+  for hours, so launch it only with the user's go-ahead.
+- **Smoke run (12 mm grid, plumbing only):**
+  - Simulated scenes rendered through the real pipeline look like real radargrams
+    (checked side by side against real lines after the gain fix; smoke sets are now too
+    small to fit a gain at all, so they render at unity).
+  - Detector trained for 30 epochs on one image: near-zero mAP, as expected. Overfit for
+    230 epochs, it fires on its own training image; the detections pass the class
+    allowlist and come out of `refine_detections` as taxonomy classes. The plumbing is
+    proven end to end.
+  - On the 4 real lines that checkpoint also produced `cavities` calls (confidence
+    0.05-0.28). Treat that as noise from a one-image model through an unvalidated rule,
+    and as the reason the rule must be validated before any real checkpoint goes into
+    `weights/best.pt`. No smoke checkpoint was installed: they live in
+    `runs/detect/smoke*`.
+- **Open issue: label boxes on crowded scenes.** A box is the extent of an object's
+  echo above 15% of its own peak, which is sensitive to neighbours and to the gain.
+  Isolated targets are boxed well. Where hyperbolas overlap, or a limb runs along a
+  slab's echo, boxes grow too wide, and at unity gain many reach the record floor. Two
+  attempts to make point reflectors yield to far stronger areas failed: one read strength
+  circularly, the other broke pipes lying in trenches. The slab case is an xfail test.
+  Decide what a box should mean before running a production batch; the options are in
+  `docs/SYNTHETIC_DATA.md`.
+- **Not validated yet:**
+  - the `cavities` polarity rule (`python -m simulate validate`)
+  - accuracy on real lines (no labels)
+  - the texture gap: real ground is far more cluttered than simulated ground
 
 **What's built:**
 - **0**: scaffold.

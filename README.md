@@ -78,6 +78,8 @@ you replace.
 - [Configuration](#configuration)
 - [Running the API server](#running-the-api-server)
 - [Running the dashboard](#running-the-dashboard)
+- [Running GPR Studio](#running-gpr-studio)
+- [Synthetic training data](#synthetic-training-data)
 - [Generating a report](#generating-a-report)
 - [Heartbeat scripts](#heartbeat-scripts)
 - [Testing](#testing)
@@ -193,14 +195,18 @@ detect/      model.py — YOLOv8 inference wrapper
 render/      bscan.py — traces -> normalised image (uncalibrated, logs as such)
 evidence/    extract.py — Detection + ScanFrame + SourceCapabilities -> Evidence
 risk/        score.py — weighted score, thresholds, escalation rules
-reason/      schema.py, engine.py (Groq), prompts/v1_finding.txt
+reason/      schema.py, engine.py (Groq), prompts/ — v1_finding.txt (pipeline), v1_pick.txt (Studio)
 store/       Store interface + duckdb_store.py — no DuckDB calls outside this module
 pipeline/    orchestrator.py — fast path emits immediately, reasoning is async
 api/         server.py (FastAPI + WebSocket), survey_manager.py, connection_manager.py, schemas.py
 reports/     generate.py — end-of-survey PDF with confidence-derived caveats
 dashboard/   React + TS + Vite, three role views — separate npm project
+studio/      GPR Studio — interpretation workstation for recorded lines (own FastAPI app + static UI);
+             interpret.py bridges a picked target into reason/ for a plain-language reading
+reference/   confirmed-hyperbola library cut from the company's survey deliverable sheets
+simulate/    synthetic training data: random scenes -> gprMax (in Docker) -> YOLO dataset
 scripts/     heartbeat scripts — run real (or replay) data through each layer end-to-end
-tests/       mirrors the package layout, 349 tests
+tests/       mirrors the package layout, 734 tests (+1 expected failure documenting an open issue)
 docs/        PRIOR_ART.md (why this was rebuilt), INTEGRATION.md (written once hardware answers arrive)
 ```
 
@@ -220,7 +226,7 @@ cp .env.example .env         # fill in GROQ_API_KEY (optional — see below)
 source .venv/bin/activate    # macOS/Linux
 .venv\Scripts\activate       # Windows
 
-pytest                       # 349 tests, should all pass
+pytest                       # 758 tests, should all pass
 ```
 
 Nothing above requires trained YOLO weights or a Groq API key — both are
@@ -228,7 +234,8 @@ optional. Without weights, `detect/model.py` raises a well-typed
 `ModelNotFoundError` that the orchestrator catches per-frame (the frame's
 metadata is still persisted, detection is just skipped for that frame).
 Without `GROQ_API_KEY`, the reasoning engine is simply not constructed and
-every `Finding` stays on the fast path only. Both are the *designed*
+every `Finding` stays on the fast path only; GPR Studio's Interpretation panel
+answers 503 saying exactly which key is missing, rather than failing quietly. Both are the *designed*
 degraded path, not a bug — see the heartbeat scripts below for it in action.
 
 This is developed on macOS but built to run on whatever machine the
@@ -300,6 +307,75 @@ Set `VITE_API_BASE_URL` in `dashboard/.env` if the API isn't on the default
 `http://127.0.0.1:8000`. Run the API server first — the dashboard has
 nothing to show without it.
 
+## Running GPR Studio
+
+```bash
+.venv/bin/python -m studio                  # http://127.0.0.1:8500
+.venv/bin/python -m studio path/to/jobs     # point it at a different dataset folder
+# Windows: .venv\Scripts\python -m studio
+```
+
+A desktop post-processing workstation for recorded SPR lines, laid out the way
+commercial GPR packages (Radar Studio, RADAN, ReflexW) are: project tree on the
+left, radargram canvas with distance and depth rulers in the middle, an A-scan
+strip and cursor readout underneath, processing and interpretation panels on the
+right. It is separate from the dashboard above — the dashboard watches surveys
+while they run; Studio opens a finished line and works it.
+
+- **Processing chain** — time-zero, dewow, background removal, band-pass,
+  Kirchhoff migration, gain (AGC / linear / exponential), stacking. The run
+  order is fixed and the panel lists steps in that order. Every change re-runs
+  the chain from the raw traces.
+- **Display** — five palettes (greyscale, inverted, seismic, rainbow, amber),
+  contrast, zoom and pan. Scaling is nearest-neighbour only, so every pixel is
+  a real sample.
+- **Hyperbola tool** — drag a box around a target. The fit measures velocity
+  from the curve's shape and shows the implied permittivity next to the one in
+  the file header, with a verdict on whether they agree. A slider adjusts the
+  velocity by eye.
+- **Targets** — save picks with their depth *and* where the velocity came from
+  (measured / set by hand / from header). The CSV export carries that on every row.
+- **Interpretation** — select a target and ask what it is. The measured half is
+  computed here: a taxonomy class from `detect/refine.py` with the rule behind it,
+  depth with its provenance, and risk across the whole line. The written half —
+  what / where / why / confidence / recommended action — comes from Groq
+  (`reason/engine.py`), and the exact evidence the model was given is shown
+  underneath so the words can be checked against it. A target measured with the
+  Hyperbola tool reports **calibrated** depth: the velocity came from that
+  target's own curve, not the file header. Needs `GROQ_API_KEY` in `.env`.
+- **Candidates** — overlays the Phase-1 detector's boxes and shape diagnoses
+  (read-only).
+- **Signature library** — the 16 confirmed hyperbolas from the company's
+  deliverable sheets (`reference/hyperbolas/`), one click from the canvas.
+
+Link straight to a line with `?job=Job_0696&channel=RAD`. Shortcuts: `H` pan,
+`P` pick, `V` hyperbola, `M` measure, `F` fit to window, `Esc` clear.
+
+Studio replaces `scripts/spr_viewer_server.py` for viewing; that script is
+still the only way to *draw* new candidate boxes.
+
+## Synthetic training data
+
+There are no labelled B-scans, so the detector is trained on simulated ones first. We place
+buried objects in random scenes matched to this site, simulate each survey line with
+gprMax (a physics simulator, run in Docker), and get exact labels for free. The detector
+learns **3 shapes** (hyperbola, linear reflector, disturbed or void area). The live
+pipeline then turns each shape into one of the 9 taxonomy classes from measurements
+(`detect/refine.py`), so risk scoring, reasoning and reports are unchanged.
+
+```bash
+docker build -t gpr-analyzer-gprmax:950d0e19 simulate/docker
+.venv/bin/python -m simulate generate --runs sim_runs/batch1 --count 30 --seed 1
+.venv/bin/python -m simulate run      --runs sim_runs/batch1        # ~55 min per scene on a Mac CPU
+.venv/bin/python -m simulate build    --runs sim_runs/batch1 --out datasets/synthetic/batch1
+.venv/bin/python -m simulate validate --runs sim_runs/batch1        # cavity rule vs known voids/trenches
+.venv/bin/python -m detect.train --data datasets/synthetic/batch1/data.yaml --epochs 100
+```
+
+`docs/SYNTHETIC_DATA.md` has the details: which instrument constants were measured from
+the real lines, the stated assumptions, the cost, and the GPL boundary around gprMax.
+Training never replaces `weights/best.pt` unless you pass `--install`.
+
 ## Generating a report
 
 ```python
@@ -342,17 +418,18 @@ pytest                                                     # 349 tests
 pytest --cov=core --cov=sources --cov=parsers --cov=preprocess \
        --cov=detect --cov=render --cov=evidence --cov=risk \
        --cov=reason --cov=store --cov=pipeline --cov=api --cov=reports
-cd dashboard && npm test                                   # 63 tests
 ```
 
-100% line coverage on every implemented Python package and on the
-dashboard — but the coverage number itself isn't the point. Every session
+98% line coverage across the Python packages (3566 statements, 83 missed) — but
+the coverage number itself isn't the point. Every session
 of this project's development ran mutation testing (deliberately break a
 line, confirm the test suite actually fails, then revert) rather than
 trusting coverage percentage alone, and it found real gaps almost every
 time — the kind where a fixture varies multiple fields together and hides a
 column-swap bug, or an assertion checks "not None" instead of an exact
-value. `ruff` and `mypy` are clean; the dashboard's `tsc`/`oxlint` are clean.
+value. `ruff` and `mypy` are clean. The uncovered lines are concentrated in the newest
+code — `studio/server.py` (88%) and `studio/session.py` (91%) most of all — which
+is exactly where the mutation-testing discipline above has not yet been applied.
 
 ## Project status
 
@@ -390,3 +467,23 @@ already — `capabilities()` returns honest conservative values — but
 - **Reports aren't wired into the API yet** — `reports/generate.py` is built
   and fully tested standalone, but there's no `/surveys/{id}/report`
   endpoint calling it yet.
+- **GPR Studio has no authentication either.** It binds to `127.0.0.1` only. Saves
+  to `annotations/<job>/` are locked and atomic within the Studio's process, but two
+  *separate* processes writing the same job (say the Studio and the old
+  `scripts/spr_viewer_server.py` at once) could still overwrite each other. That's fine
+  for one interpreter per machine; it needs a real store before it's shared.
+- **No trained detector yet.** The 3-shape detector's pipeline is built and tested end to
+  end, but training data has to be simulated first (about 55 minutes per scene on a Mac
+  CPU; see `docs/SYNTHETIC_DATA.md`). Until `weights/best.pt` exists, detection reports
+  "model not found" as designed.
+- **The cavity call is unvalidated.** `detect/refine.py` calls a disturbed area a
+  `cavities` finding when its top echo keeps the direct wave's polarity. That's standard
+  interpretation practice, but not yet checked against known voids on this instrument.
+- **Synthetic label boxes are unreliable on crowded scenes.** Each box is the extent of an
+  object's echo above 15% of its own peak. Where hyperbolas overlap, or a pipe's limb runs
+  along a slab's echo, boxes grow too wide, and at unity gain many reach the bottom of the
+  record. Clear, isolated targets are boxed well. How a box should be defined is an open
+  design question; see `docs/SYNTHETIC_DATA.md`.
+- **Synthetic ground is cleaner than real ground.** The simulated scenes add stones and
+  broken-up trenches, but real soil is messier. Accuracy on real lines can't be measured
+  until labelled real data exists (company questions #1 and #6).

@@ -99,9 +99,10 @@ class DuckDBStore(Store):
                 detection_class, detection_confidence,
                 depth_m, depth_confidence, position_m, position_confidence,
                 amplitude, amplitude_confidence, hyperbola_width_px, neighbours,
+                corroborating_channels,
                 risk_level, risk_score, risk_rules_fired,
                 "what", "where", "why", "how", recommended_action, reasoning_latency_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 finding_id,
@@ -118,6 +119,7 @@ class DuckDBStore(Store):
                 ev.amplitude_confidence,
                 ev.hyperbola_width_px,
                 json.dumps(list(ev.neighbours)),
+                ev.corroborating_channels,
                 finding.risk_level,
                 finding.risk_score,
                 json.dumps(list(finding.risk_rules_fired)),
@@ -226,6 +228,12 @@ class DuckDBStore(Store):
             "by_class": {str(k): int(v) for k, v in by_class.items()},
         }
 
+    def survey_exists(self, survey_id: str) -> bool:
+        # Not _fetch_scalar: that asserts exactly one row, which a non-existent survey_id
+        # violates by design (zero rows) — the whole point of this query.
+        row = self._conn.execute("SELECT 1 FROM frames WHERE survey_id = ? LIMIT 1", [survey_id]).fetchone()
+        return row is not None
+
     def close(self) -> None:
         self._conn.close()
 
@@ -241,6 +249,9 @@ class DuckDBStore(Store):
             amplitude_confidence=row["amplitude_confidence"],
             hyperbola_width_px=row["hyperbola_width_px"],
             neighbours=tuple(json.loads(row["neighbours"])) if row["neighbours"] else (),
+            # `or 1` covers a row written before migration 002: one channel's evidence is what it
+            # actually had, and defaulting to that is honest where a null would need guessing.
+            corroborating_channels=row["corroborating_channels"] or 1,
         )
         return Finding(
             evidence=evidence,

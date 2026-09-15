@@ -341,6 +341,24 @@ def test_get_survey_summary_empty_survey(store: DuckDBStore) -> None:
     assert summary["by_class"] == {}
 
 
+def test_survey_exists_true_once_a_frame_is_saved(store: DuckDBStore) -> None:
+    store.save_frame("s1", "l1", _frame())
+    assert store.survey_exists("s1") is True
+
+
+def test_survey_exists_false_for_an_unknown_survey_id(store: DuckDBStore) -> None:
+    assert store.survey_exists("nonexistent") is False
+
+
+def test_survey_exists_true_even_with_zero_findings(store: DuckDBStore) -> None:
+    # get_survey_summary can't tell "never existed" from "existed, zero findings" — this can,
+    # because save_frame runs for every frame regardless of whether it produces a finding.
+    store.save_frame("s1", "l1", _frame())
+    summary = store.get_survey_summary("s1")
+    assert summary["total_findings"] == 0
+    assert store.survey_exists("s1") is True
+
+
 def test_migrations_are_idempotent_across_reconnects(tmp_path: Path) -> None:
     db_path = tmp_path / "reconnect.duckdb"
     store1 = DuckDBStore(db_path)
@@ -395,3 +413,54 @@ def test_failing_migration_rolls_back_atomically(tmp_path: Path, monkeypatch: py
     with pytest.raises(duckdb_store_module.duckdb.Error, match="ok"):
         conn.execute("SELECT COUNT(*) FROM ok")
     conn.close()
+
+
+# --- corroborating_channels persistence, and the alignment trap (2026-09-14) -
+
+
+def test_corroborating_channels_survives_a_round_trip(store: DuckDBStore) -> None:
+    # Without persisting this, a finding read back loses the strongest evidence it had and
+    # evidence/quality.py silently regrades it from QL-B1 to QL-B2 — a downgrade caused purely by
+    # a trip through storage.
+    frame_id = store.save_frame("s1", "line_1", _frame())
+    finding = _finding(evidence=_evidence(corroborating_channels=3))
+    store.save_finding("s1", "line_1", frame_id, finding)
+
+    [read_back] = store.get_findings_by_line("s1", "line_1")
+    assert read_back.evidence.corroborating_channels == 3
+
+
+def test_a_finding_saved_without_corroboration_reads_back_as_one(store: DuckDBStore) -> None:
+    frame_id = store.save_frame("s1", "line_1", _frame())
+    store.save_finding("s1", "line_1", frame_id, _finding())
+
+    [read_back] = store.get_findings_by_line("s1", "line_1")
+    assert read_back.evidence.corroborating_channels == 1
+
+
+def test_the_insert_statement_columns_placeholders_and_values_all_agree() -> None:
+    """Guards the specific mistake that adding this column caused.
+
+    The column name and the bound value were both added correctly, in matching positions — but the
+    VALUES clause kept 23 placeholders for 24 columns. DuckDB raised per frame, the orchestrator's
+    per-frame exception guard swallowed it by design, the survey completed having emitted nothing,
+    and a WebSocket test waited forever for a finding that would never arrive. A missing "?"
+    presented as a hung test suite, not as an error.
+
+    The next migration will face the same trap, so this counts the three lists rather than trusting
+    that a human lined them up.
+    """
+    import inspect
+
+    source = inspect.getsource(DuckDBStore.save_finding)
+    statement = source[source.index("INSERT INTO findings") : source.index("return int(finding_id)")]
+
+    column_block = statement[statement.index("(") + 1 : statement.index(") VALUES")]
+    n_columns = len([c for c in column_block.replace("\n", " ").split(",") if c.strip()])
+    n_placeholders = statement[statement.index(") VALUES") :].count("?")
+    value_block = statement[statement.index("[") + 1 : statement.index("],")]
+    n_values = len([v for v in value_block.split(",\n") if v.strip()])
+
+    assert n_columns == n_placeholders == n_values, (
+        f"INSERT is misaligned: {n_columns} columns, {n_placeholders} placeholders, {n_values} values"
+    )

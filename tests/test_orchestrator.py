@@ -121,7 +121,7 @@ async def test_orchestrator_end_to_end_with_reasoning(tmp_path: Path, caplog: py
         detector=detector,
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
         reasoning_engine=engine,
     )
@@ -181,7 +181,7 @@ async def test_orchestrator_without_reasoning_engine_only_emits_created(tmp_path
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
         reasoning_engine=None,
     )
@@ -207,7 +207,7 @@ async def test_orchestrator_no_weights_skips_frames_without_crashing(tmp_path: P
         detector=_RaisingDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -231,7 +231,7 @@ async def test_orchestrator_empty_detections_produces_no_findings(tmp_path: Path
         detector=_EmptyDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -260,7 +260,7 @@ async def test_orchestrator_reasoning_failure_still_leaves_finding_persisted(tmp
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
         reasoning_engine=engine,
     )
@@ -277,6 +277,57 @@ async def test_orchestrator_reasoning_failure_still_leaves_finding_persisted(tmp
     store.close()
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_emits_the_real_per_finding_id_not_the_shared_frame_id(tmp_path: Path) -> None:
+    # Every other test in this file discards emit()'s own first argument (its lambda is
+    # `lambda finding_id, finding, event_type: ...` but never reads finding_id), so a bug that
+    # emitted frame_id — or any other single shared value — instead of each finding's own
+    # store.save_finding() id would pass every one of them. One frame producing two findings
+    # (_MultiClassDetector) is the smallest fixture where "the real id" and "the frame id"
+    # provably diverge: with the wiring correct the two findings get two different ids; with
+    # frame_id substituted, both would incorrectly share the same value.
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    cfg = _config(frames_dir)
+
+    store = DuckDBStore(tmp_path / "test.duckdb")
+    engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
+    created_ids: list[int] = []
+    reasoned_ids: list[int] = []
+
+    def emit(finding_id: int, finding: Finding, event_type: str) -> None:
+        (created_ids if event_type == "finding.created" else reasoned_ids).append(finding_id)
+
+    orchestrator = Orchestrator(
+        source=ReplaySource(cfg.source.replay),
+        detector=_MultiClassDetector(),
+        store=store,
+        config=cfg,
+        emit=emit,
+        survey_id="survey-1",
+        reasoning_engine=engine,
+    )
+
+    await orchestrator.run()
+    await orchestrator.wait_for_pending_reasoning()
+
+    assert len(created_ids) == 2
+    assert len(set(created_ids)) == 2  # two real, distinct ids -- not one shared frame_id
+
+    # Each finding_id must be the one store.save_finding() actually assigned that finding: a
+    # reasoning update keyed by the wrong id silently touches zero rows (`WHERE finding_id = ?`
+    # matches nothing) rather than crashing, so both findings ending up reasoned is the proof
+    # both real ids, not one repeated id, reached _reason_and_emit / update_finding_reasoning.
+    persisted = store.get_findings_by_line("survey-1", "line_1")
+    assert len(persisted) == 2
+    assert all(f.what == _VALID_RESPONSE["what"] for f in persisted)
+
+    # created/reasoned pairing (Session 8's finding_id correlation contract) must still hold
+    # per-finding once there's more than one finding sharing a frame.
+    assert set(created_ids) == set(reasoned_ids)
+    store.close()
+
+
 class _SingleTracesOnlyFrameSource(ScanSource):
     """No real source produces a traces-only ScanFrame yet — this exists purely to exercise
     the orchestrator's render/bscan.py fallback path (frame.image is None, frame.traces isn't).
@@ -289,6 +340,7 @@ class _SingleTracesOnlyFrameSource(ScanSource):
             traces=np.random.default_rng(0).normal(size=(20, 300)),
             position=None,
             position_source="unknown",
+            sample_interval_ns=0.1,
         )
 
     def capabilities(self) -> SourceCapabilities:
@@ -310,7 +362,7 @@ async def test_orchestrator_renders_traces_only_frame_via_render_bscan(tmp_path:
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -340,7 +392,7 @@ async def test_orchestrator_shares_frame_wide_risk_across_detections(tmp_path: P
         detector=_MultiClassDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -403,7 +455,7 @@ async def test_orchestrator_one_bad_frame_does_not_abort_the_survey(
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -441,7 +493,7 @@ async def test_orchestrator_fast_path_does_not_block_on_slow_reasoning(tmp_path:
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
         reasoning_engine=engine,
     )
@@ -474,7 +526,7 @@ async def test_cancel_pending_reasoning_discards_in_flight_task_without_stale_em
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
         reasoning_engine=engine,
     )
@@ -525,7 +577,7 @@ async def test_orchestrator_neighbours_uses_identity_not_equality(tmp_path: Path
         detector=_TwoValueEqualDetectionsDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: emitted.append((finding, event_type)),
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)),
         survey_id="survey-1",
     )
 
@@ -550,7 +602,7 @@ async def test_orchestrator_store_write_happens_before_reasoned_emit(tmp_path: P
     engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
     read_back_at_reasoned_emit: list[Finding] = []
 
-    def emit(finding: Finding, event_type: str) -> None:
+    def emit(finding_id: int, finding: Finding, event_type: str) -> None:
         if event_type == "finding.reasoned":
             # Read back from the SAME store instance synchronously, inside
             # the callback — if the store update happened after emit()
@@ -621,7 +673,7 @@ async def test_orchestrator_run_does_not_block_the_event_loop_between_frames(tmp
         detector=_FakeDetector(),
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: None,
+        emit=lambda finding_id, finding, event_type: None,
         survey_id="survey-1",
     )
 
@@ -643,3 +695,86 @@ async def test_orchestrator_run_does_not_block_the_event_loop_between_frames(tmp
 
     await run_task
     store.close()
+
+
+class _ShapeDetector:
+    """Stands in for a detector trained on the three shapes (detect/shapes.py)."""
+
+    def __init__(self, class_name: str, bbox: tuple[float, float, float, float]) -> None:
+        self.class_name, self.bbox = class_name, bbox
+
+    def detect(self, image: np.ndarray) -> list[Detection]:
+        return [Detection(class_name=self.class_name, confidence=0.8, bbox_xyxy=self.bbox)]
+
+
+class _TracesFrameSource(ScanSource):
+    def __init__(self, traces: np.ndarray) -> None:
+        self._traces = traces
+
+    def frames(self):
+        yield ScanFrame(
+            source_type="synthetic_traces",
+            provenance={},
+            traces=self._traces,
+            position=None,
+            position_source="unknown",
+            sample_interval_ns=0.1,
+        )
+
+    def capabilities(self) -> SourceCapabilities:
+        return SourceCapabilities(
+            has_calibrated_depth=False, has_real_position=False, has_true_amplitude=False, latency_class="batch"
+        )
+
+
+def _line_with_a_strong_reflector() -> tuple[np.ndarray, tuple[float, float, float, float]]:
+    """384 x 256 traces with a direct wave and one strong reflector, plus the rendered-image box over it."""
+    traces = np.random.default_rng(0).normal(0.0, 0.2, size=(384, 256))
+    traces[:, 18:23] += [-3.0, 4.0, 10.0, 4.0, -3.0]
+    traces[100:110, 120:126] += 8.0
+    return traces, (98 / 384 * 640, 115 / 256 * 640, 112 / 384 * 640, 132 / 256 * 640)
+
+
+async def _created_findings(source: ScanSource, detector, cfg, tmp_path: Path) -> list[Finding]:
+    store = DuckDBStore(tmp_path / "test.duckdb")
+    emitted: list[tuple[Finding, str]] = []
+    orchestrator = Orchestrator(
+        source=source, detector=detector, store=store, config=cfg,
+        emit=lambda finding_id, finding, event_type: emitted.append((finding, event_type)), survey_id="survey-1",
+    )
+    await orchestrator.run()
+    store.close()
+    return [finding for finding, event in emitted if event == "finding.created"]
+
+
+@pytest.mark.asyncio
+async def test_a_shape_detection_reaches_risk_and_evidence_as_a_measured_taxonomy_class(tmp_path: Path) -> None:
+    # The detector finds shapes; everything downstream speaks the taxonomy. On a traces
+    # frame the refinement measures amplitude, so a strong reflector is reported as clear.
+    traces, bbox = _line_with_a_strong_reflector()
+    [finding] = await _created_findings(
+        _TracesFrameSource(traces), _ShapeDetector("point_reflector", bbox), _config(tmp_path / "unused"), tmp_path
+    )
+    assert finding.evidence.detection_class == "clear_point_reflector"
+
+
+@pytest.mark.asyncio
+async def test_a_shape_detection_on_an_image_frame_falls_back_to_the_low_snr_class(tmp_path: Path) -> None:
+    # A source-supplied image has no known mapping onto samples, so amplitude is not
+    # measured and the class that claims least is reported.
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    cfg = _config(frames_dir)
+    [finding] = await _created_findings(
+        ReplaySource(cfg.source.replay), _ShapeDetector("point_reflector", (10.0, 10.0, 50.0, 50.0)), cfg, tmp_path
+    )
+    assert finding.evidence.detection_class == "low_snr_point_reflector"
+
+
+@pytest.mark.asyncio
+async def test_a_class_outside_both_shapes_and_taxonomy_never_becomes_a_finding(tmp_path: Path) -> None:
+    traces, bbox = _line_with_a_strong_reflector()
+    findings = await _created_findings(
+        _TracesFrameSource(traces), _ShapeDetector("tractor", bbox), _config(tmp_path / "unused"), tmp_path
+    )
+    assert findings == []

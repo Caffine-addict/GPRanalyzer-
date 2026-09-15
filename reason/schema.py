@@ -11,7 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA_VERSION = "v1_finding"
+# No SCHEMA_VERSION constant here on purpose. One existed, hardcoded to "v1_finding",
+# and nothing in the repo ever read it — so with two prompts live (v1_finding for the
+# pipeline, v1_pick for the Studio) it was simply wrong half the time while looking
+# authoritative. The prompt actually in use is `config.reasoning.prompt_version`, which
+# `reason/engine.py` resolves to a template path; ask that, not a constant.
 
 _FIELDS = ("what", "where", "why", "how", "recommended_action")
 

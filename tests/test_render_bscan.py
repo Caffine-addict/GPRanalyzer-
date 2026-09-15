@@ -78,12 +78,26 @@ def test_traces_to_image_reaches_exact_bounds_for_full_range_input() -> None:
 
 
 def test_traces_to_image_preserves_scaling_polarity() -> None:
-    # Distinct constant halves so resize interpolation can't blur the check:
-    # top half is the global min, bottom half the global max. Catches lo/hi
-    # being silently swapped (an inverted, photometrically wrong B-scan).
+    # Distinct constant halves so resize interpolation can't blur the check: the
+    # first five traces are the global min, the last five the global max. Traces
+    # run across the rendered image, so the min is the left edge and the max the
+    # right. Catches lo/hi being silently swapped (an inverted B-scan).
     traces = np.vstack([np.zeros((5, 20)), np.full((5, 20), 10.0)])
     out = traces_to_image(traces)
-    assert out[0, :].max() < out[-1, :].min()
+    assert out[:, 0].max() < out[:, -1].min()
+
+
+def test_traces_to_image_draws_time_down_and_distance_across() -> None:
+    # A radargram is read with time running down and distance across, and B-scan
+    # image files arrive that way. `traces` is (n_traces, n_samples); rendering it
+    # without transposing drew time across instead, so hyperbolas would have opened
+    # sideways on trace frames and downward on image frames — two orientations for
+    # one detector. Brightness here depends on time only.
+    time_ramp = np.tile(np.arange(256, dtype=float), (384, 1))  # (n_traces, n_samples)
+    out = traces_to_image(time_ramp)
+    assert np.ptp(out[:, TARGET_SIZE // 2]) > 200  # changes down a column (time)
+    assert np.ptp(out[TARGET_SIZE // 2, :]) <= 1  # constant along a row (distance)
+    assert out[0, 0] < out[-1, 0]  # earliest time at the top
 
 
 def test_traces_to_image_clips_infinite_values_without_warning() -> None:

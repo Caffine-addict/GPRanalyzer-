@@ -37,7 +37,8 @@ class DetectionConfig:
     weights_path: str
     conf_threshold: float
     iou_threshold: float
-    classes: tuple[str, ...]
+    classes: tuple[str, ...]  # what the detector's weights may output (an allowlist)
+    taxonomy: tuple[str, ...]  # what the pipeline reports; shapes are refined into these
 
 
 @dataclass(frozen=True)
@@ -147,12 +148,21 @@ class Config:
     api: ApiConfig
 
 
+def _class_names(value: Any, key: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value or not all(isinstance(name, str) and name for name in value):
+        raise ConfigError(f"detection.{key} must be a non-empty list of class names")
+    if len(set(value)) != len(value):
+        raise ConfigError(f"detection.{key} lists a class more than once")
+    return tuple(value)
+
+
 def _build_detection(d: dict[str, Any]) -> DetectionConfig:
     return DetectionConfig(
         weights_path=_require(d, "weights_path", "detection"),
         conf_threshold=_require(d, "conf_threshold", "detection"),
         iou_threshold=_require(d, "iou_threshold", "detection"),
-        classes=tuple(_require(d, "classes", "detection")),
+        classes=_class_names(_require(d, "classes", "detection"), "classes"),
+        taxonomy=_class_names(_require(d, "taxonomy", "detection"), "taxonomy"),
     )
 
 

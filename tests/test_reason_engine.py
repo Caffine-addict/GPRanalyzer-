@@ -184,7 +184,11 @@ def test_failure_is_logged(caplog: pytest.LogCaptureFixture) -> None:
         engine.reason(_evidence(), _RISK)
 
     messages = [r.getMessage() for r in caplog.records]
-    assert any("reason.failed" in m and "RuntimeError" in m for m in messages)
+    # Each attempt is logged with its model and error, then one final line naming every model
+    # tried. An operator reading logs after a survey needs to see that the fallback was used and
+    # also failed — "reasoning failed" alone hides whether the second model was even reached.
+    assert any("reason.attempt_failed" in m and "RuntimeError" in m for m in messages)
+    assert any("reason.failed" in m and "models_tried" in m for m in messages)
 
 
 def test_success_is_logged(caplog: pytest.LogCaptureFixture) -> None:
@@ -219,3 +223,82 @@ def test_schema_passed_to_client_matches_reason_schema() -> None:
     engine.reason(_evidence(), _RISK)
 
     assert client.calls[0]["schema"] == JSON_SCHEMA
+
+
+class _SequencedClient:
+    """A client whose outcome differs per call, so the fallback path can be exercised.
+
+    `_FakeClient` holds one outcome for every call and so cannot express "fail, then succeed",
+    which is exactly the sequence the fallback exists for. Each call's model is recorded, and an
+    unexpected extra call fails loudly rather than silently returning something.
+    """
+
+    def __init__(self, *outcomes: Exception | dict[str, Any]) -> None:
+        self._outcomes = list(outcomes)
+        self.models: list[str] = []
+
+    def complete_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        timeout_s: float,
+        strict: bool,
+    ) -> dict[str, Any]:
+        self.models.append(model)
+        if not self._outcomes:
+            raise AssertionError(f"unexpected extra call with model={model!r}")
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def test_a_primary_model_failure_falls_back_to_the_smaller_model() -> None:
+    # The two failures a live survey actually hits are the provider rate-limiting and the primary
+    # model timing out. Both are worth one retry on the faster model before giving up.
+    client = _SequencedClient(RuntimeError("rate limited"), _VALID_RESPONSE)
+    engine = ReasoningEngine(client, _config())
+
+    result, _ = engine.reason(_evidence(), _RISK)
+    assert result is not None
+    assert result.what == _VALID_RESPONSE["what"]
+    assert client.models == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_both_models_failing_still_degrades_to_none() -> None:
+    client = _SequencedClient(RuntimeError("boom"), RuntimeError("boom again"))
+    engine = ReasoningEngine(client, _config())
+
+    result, latency_ms = engine.reason(_evidence(), _RISK)
+    assert result is None
+    assert latency_ms >= 0.0
+    assert client.models == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_a_prompt_failure_is_not_retried_on_the_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A broken prompt fails identically on every model, so a second billed call would learn
+    # nothing. The client must not be reached at all.
+    def _explode(*_args: object, **_kwargs: object) -> str:
+        raise OSError("template missing")
+
+    client = _SequencedClient(_VALID_RESPONSE)
+    engine = ReasoningEngine(client, _config())
+    monkeypatch.setattr("reason.engine.build_prompt", _explode)
+
+    result, _ = engine.reason(_evidence(), _RISK)
+    assert result is None
+    assert client.models == []
+
+
+def test_an_identical_fallback_model_is_not_called_twice() -> None:
+    # Configuring the fallback to the primary model means "no fallback", not "try it again".
+    client = _SequencedClient(RuntimeError("boom"))
+    engine = ReasoningEngine(client, _config(fallback_model="openai/gpt-oss-120b"))
+
+    result, _ = engine.reason(_evidence(), _RISK)
+    assert result is None
+    assert client.models == ["openai/gpt-oss-120b"]

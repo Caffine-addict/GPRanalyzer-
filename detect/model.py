@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
+
+# Must be set before `ultralytics` is imported: `ultralytics.utils.SAFE_LOAD` is a module-level
+# constant read once from this env var at import time, not re-checked per call. `YOLO(...)`
+# otherwise does an unrestricted `torch.load()` — the standard pickle RCE surface — on whatever
+# file `weights_path` in config.yaml names. `setdefault` so an operator can still explicitly opt
+# out (e.g. to load a legacy checkpoint with custom classes outside ultralytics' allow-list).
+os.environ.setdefault("ULTRALYTICS_SAFE_LOAD", "true")
 
 import numpy as np
 from ultralytics import YOLO

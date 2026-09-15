@@ -100,6 +100,15 @@ class Evidence:
     neighbours: tuple[str, ...] = ()
     prior_passes: tuple[Any, ...] = ()
 
+    # How many *independent* receivers recorded this target and agreed it is there. 1 means one
+    # channel saw it, which is the ordinary case and is not corroboration. This exists because the
+    # strongest evidence this project can produce — the same reflector on two receivers with
+    # different time axes, fitted separately, agreeing on position and depth — was being computed
+    # and then hidden from every consumer that matters. `evidence/quality.py` needs it to reach
+    # QL-B1, and the reasoning prompt needs it or the model writes "no prior passes, so this is the
+    # first observation" about a target two receivers just confirmed.
+    corroborating_channels: int = 1
+
     def __post_init__(self) -> None:
         for value, confidence, name in (
             (self.depth_m, self.depth_confidence, "depth"),
@@ -121,6 +130,14 @@ class Evidence:
         # and reason/prompt.py formats this field with no None-guard.
         if self.hyperbola_width_px is None:
             raise ValueError("hyperbola_width_px must not be None")
+
+        # A target was recorded at least once, by definition — 0 or negative is not a weaker
+        # claim, it is an impossible one, and it would understate the grade rather than overstate
+        # it, which is the direction that hides real evidence.
+        if self.corroborating_channels < 1:
+            raise ValueError(
+                f"corroborating_channels must be at least 1, got {self.corroborating_channels}"
+            )
 
 
 @dataclass(frozen=True)

@@ -57,3 +57,13 @@ class Store(ABC):
     @abstractmethod
     def get_survey_summary(self, survey_id: str) -> dict[str, Any]:
         """Aggregate stats for a survey: total findings, counts by risk level and by class."""
+
+    @abstractmethod
+    def survey_exists(self, survey_id: str) -> bool:
+        """Did this survey ever run — at least one frame persisted for it?
+
+        get_survey_summary can't answer this: it's a COUNT of findings, which is 0 both for
+        "never existed" and "ran, found nothing". This checks frames, saved for every frame
+        regardless of whether it produced a finding, so it stays true for a real, empty-result
+        survey too — and unlike SurveyManager's in-memory record, it survives a server restart.
+        """

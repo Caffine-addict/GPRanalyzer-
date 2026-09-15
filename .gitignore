@@ -35,3 +35,17 @@ dashboard/**/dist/
 
 # OS
 .DS_Store
+
+# Synthetic data: large, regenerable, never committed (runs/ is already ignored above)
+sim_runs/
+datasets/
+
+# Company-proprietary survey data and its derivatives — never committed. Dataset/ and
+# annotations/ are the delivered survey lines and everything derived from them (candidate
+# boxes, diagnoses, picks). reference/hyperbolas/ is the two company deliverable sheets and
+# their extracted crops — its own manifest.json names the client and site, so the whole
+# directory is excluded, not just the images. reference/library.py and reference/__init__.py
+# (code, not data) stay tracked.
+Dataset/
+annotations/
+reference/hyperbolas/

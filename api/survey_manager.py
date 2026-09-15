@@ -95,12 +95,14 @@ class SurveyManager:
         )
         self._surveys[survey_id] = record
 
-        def emit(finding: Finding, event_type: str) -> None:
+        def emit(finding_id: int, finding: Finding, event_type: str) -> None:
             # Bridges the orchestrator's synchronous callback to the async
             # broadcast. Always called from the event-loop thread (directly
             # from _process_frame, or after a run_in_executor await resumes
             # on the loop) — asyncio.create_task is safe here.
-            task = asyncio.create_task(self._broadcast_finding(survey_id, event_type, finding))
+            task = asyncio.create_task(
+                self._broadcast_finding(survey_id, event_type, finding_id, finding)
+            )
             self._pending_broadcasts.add(task)
             task.add_done_callback(self._pending_broadcasts.discard)
 
@@ -159,7 +161,17 @@ class SurveyManager:
         finally:
             record.stopped_at = _now_iso()
 
-    async def _broadcast_finding(self, survey_id: str, event_type: str, finding: Finding) -> None:
+    async def _broadcast_finding(
+        self, survey_id: str, event_type: str, finding_id: int, finding: Finding
+    ) -> None:
+        # finding_id lets a client correlate "finding.created" and the later "finding.reasoned"
+        # for the same row — without it, the dashboard's live feed can only append both as
+        # separate, unmergeable log entries (Session 8's documented scope cut).
         await self._broadcast(
-            {"type": event_type, "survey_id": survey_id, "finding": finding_to_dict(finding)}
+            {
+                "type": event_type,
+                "survey_id": survey_id,
+                "finding_id": finding_id,
+                "finding": finding_to_dict(finding),
+            }
         )

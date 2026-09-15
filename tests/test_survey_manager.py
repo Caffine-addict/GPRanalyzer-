@@ -174,6 +174,13 @@ async def test_broadcast_receives_finding_created_and_reasoned(tmp_path: Path) -
     assert "finding.reasoned" in types
     assert all(m["survey_id"] == "survey-1" for m in broadcasts)
     assert all("finding" in m for m in broadcasts)
+
+    # finding_id lets a client correlate "created" and "reasoned" for the same row — both
+    # events here are for the survey's one finding, so they must carry the same real id.
+    created = next(m for m in broadcasts if m["type"] == "finding.created")
+    reasoned = next(m for m in broadcasts if m["type"] == "finding.reasoned")
+    assert isinstance(created["finding_id"], int)
+    assert created["finding_id"] == reasoned["finding_id"]
     store.close()
 
 

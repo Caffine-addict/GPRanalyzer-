@@ -21,6 +21,7 @@ def evidence_to_dict(evidence: Evidence) -> dict[str, Any]:
         "amplitude": evidence.amplitude,
         "amplitude_confidence": evidence.amplitude_confidence,
         "hyperbola_width_px": evidence.hyperbola_width_px,
+        "corroborating_channels": evidence.corroborating_channels,
         "neighbours": list(evidence.neighbours),
     }
 

@@ -22,6 +22,7 @@ import numpy as np
 from core.config import Config
 from core.contracts import Detection, Finding, ScanFrame, SourceCapabilities
 from detect.model import ModelLoadError, ModelNotFoundError
+from detect.refine import refine_detections
 from evidence.extract import extract_evidence
 from preprocess.enhance import enhance
 from reason.engine import ReasoningEngine
@@ -32,7 +33,7 @@ from store.base import Store
 
 logger = logging.getLogger(__name__)
 
-EmitCallback = Callable[[Finding, str], None]
+EmitCallback = Callable[[int, Finding, str], None]
 
 
 class DetectorLike(Protocol):
@@ -136,6 +137,18 @@ class Orchestrator:
             logger.warning("orchestrator.detect_unavailable frame_id=%d error=%s", frame_id, e)
             return
 
+        # The detector finds shapes; risk, evidence and reasoning speak the taxonomy.
+        # Raw traces go in only when this frame's image was rendered from them here —
+        # a source-supplied image has no known mapping from box pixels onto samples.
+        refinements = refine_detections(
+            detections,
+            taxonomy=self._config.detection.taxonomy,
+            image_shape=enhanced.shape,
+            traces=frame.traces if frame.image is None else None,
+            sample_interval_ns=frame.sample_interval_ns if frame.image is None else None,
+        )
+        detections = [refinement.detection for refinement in refinements]
+
         if not detections:
             latency_ms = (time.monotonic() - fast_path_start) * 1000
             logger.info("orchestrator.fast_path frame_id=%d latency_ms=%.2f n_findings=0", frame_id, latency_ms)
@@ -146,7 +159,12 @@ class Orchestrator:
         for detection in detections:
             neighbours = tuple(d.class_name for d in detections if d is not detection)
             evidence = extract_evidence(
-                detection, frame, capabilities, self._config.evidence, neighbours=neighbours
+                detection,
+                frame,
+                capabilities,
+                self._config.evidence,
+                neighbours=neighbours,
+                image_shape=enhanced.shape,
             )
             finding = Finding(
                 evidence=evidence,
@@ -156,7 +174,7 @@ class Orchestrator:
             )
 
             finding_id = self._store.save_finding(self._survey_id, self._line_id, frame_id, finding)
-            self._emit(finding, "finding.created")
+            self._emit(finding_id, finding, "finding.created")
 
             if self._reasoning_engine is not None:
                 task = asyncio.create_task(self._reason_and_emit(finding_id, finding, risk))
@@ -192,4 +210,4 @@ class Orchestrator:
             reasoning_latency_ms=latency_ms,
         )
         self._store.update_finding_reasoning(finding_id, updated)
-        self._emit(updated, "finding.reasoned")
+        self._emit(finding_id, updated, "finding.reasoned")

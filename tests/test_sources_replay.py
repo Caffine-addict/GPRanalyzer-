@@ -14,8 +14,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-import parsers.image  # noqa: F401 - registers the image parser as a side effect
+import parsers.base
+import parsers.image  # registers the image parser as a side effect
 from core.config import ReplaySourceConfig
+from core.contracts import ScanFrame
 from sources.replay import ReplaySource
 
 
@@ -121,6 +123,33 @@ def test_replay_ignores_unsupported_extensions(tmp_path: Path) -> None:
     )
     frames = list(source.frames())
     assert len(frames) == 1
+
+
+def test_replay_derives_supported_extensions_from_the_parser_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # sources/replay.py used to keep its own independent extension allowlist; it now calls
+    # parsers.base.registered_extensions() instead, so a newly-registered parser (parsers/spr.py's
+    # "rad"/"ra1"/"ra2", or any future format) is automatically replayable with no edit here.
+    # Every other test in this file only ever writes .jpg fixtures, which a stale hardcoded
+    # fallback list (e.g. {"jpg", "jpeg", "png"}) would satisfy just as well -- registering a
+    # throwaway extension nobody else uses and confirming ReplaySource picks it up is the only
+    # way to prove the derivation is actually live, not coincidentally still working.
+    def _fake_parser(path: Path) -> ScanFrame:
+        return ScanFrame(
+            source_type="fake", provenance={"path": str(path)}, image=np.zeros((4, 4), dtype=np.uint8)
+        )
+
+    monkeypatch.setitem(parsers.base._REGISTRY, "weirdfmt", _fake_parser)
+    (tmp_path / "scan.weirdfmt").write_bytes(b"content is irrelevant -- the fake parser ignores it")
+
+    source = ReplaySource(
+        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+    )
+    frames = list(source.frames())
+
+    assert len(frames) == 1
+    assert frames[0].provenance["path"].endswith("scan.weirdfmt")
 
 
 def test_replay_single_step_via_next(tmp_path: Path) -> None:

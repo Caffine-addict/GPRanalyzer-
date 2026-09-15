@@ -10,6 +10,9 @@ are unavailable."
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +22,8 @@ import detect.model as detect_model
 from core.config import DetectionConfig
 from detect.model import Detector, ModelLoadError, ModelNotFoundError
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 def _config(weights_path: str) -> DetectionConfig:
     return DetectionConfig(
@@ -26,6 +31,7 @@ def _config(weights_path: str) -> DetectionConfig:
         conf_threshold=0.25,
         iou_threshold=0.7,
         classes=("cavities", "elongated_linear_target"),
+        taxonomy=("cavities", "elongated_linear_target"),
     )
 
 
@@ -346,3 +352,36 @@ def test_detect_accepts_class_name_within_configured_taxonomy(
     detections = detector.detect(np.zeros((10, 10), dtype=np.uint8))
 
     assert {d.class_name for d in detections} == {"cavities", "elongated_linear_target"}
+
+
+def test_ultralytics_safe_load_is_set_before_ultralytics_is_imported() -> None:
+    """`os.environ.setdefault("ULTRALYTICS_SAFE_LOAD", "true")` only protects YOLO(...)'s
+    torch.load() (the standard pickle RCE surface — see the comment above that line in
+    detect/model.py) if it runs BEFORE `from ultralytics import YOLO`: ultralytics.utils.SAFE_LOAD
+    is a module-level constant read once from the env var at import time, never re-checked per
+    call, so setting the var one statement too late leaves SAFE_LOAD False forever in that
+    process even though the env var itself does end up set to "true".
+
+    Every other test in this file monkeypatches detect_model.YOLO directly, bypassing
+    ultralytics.utils entirely — none of them would notice a future edit that reordered these
+    two lines. This has to run in a fresh subprocess with ULTRALYTICS_SAFE_LOAD scrubbed from
+    the environment: within this pytest process ultralytics may already have been imported by
+    an earlier test file (or by this file's own `from ultralytics import YOLO` at module load),
+    so SAFE_LOAD's value can only be observed honestly on a first, clean import.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "ULTRALYTICS_SAFE_LOAD"}
+    result = subprocess.run(
+        [sys.executable, "-c", "import detect.model; import ultralytics.utils as u; print(u.SAFE_LOAD)"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True", (
+        f"ultralytics.utils.SAFE_LOAD was not True after importing detect.model — the "
+        f"setdefault ran too late (or not at all) to protect YOLO(...)'s torch.load() call. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )

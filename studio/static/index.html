@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPR Studio</title>
+<link rel="stylesheet" href="/static/studio.css">
+</head>
+<body>
+
+<header class="menubar">
+  <div class="brand"><span class="mark"></span>GPR&nbsp;Studio</div>
+  <nav class="menus">
+    <button class="menu" data-menu="file">File</button>
+    <button class="menu" data-menu="process">Process</button>
+    <button class="menu" data-menu="view">View</button>
+    <button class="menu" data-menu="tools">Tools</button>
+  </nav>
+  <div class="menubar-right">
+    <span class="job-badge" id="jobBadge">no line open</span>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="tool-group" id="toolButtons" role="toolbar" aria-label="Interaction tools">
+    <button class="tool" data-tool="pan"       title="Pan / select (H)"><span class="glyph">✥</span>Pan</button>
+    <button class="tool" data-tool="pick"      title="Mark a target (P)"><span class="glyph">✚</span>Pick</button>
+    <button class="tool" data-tool="hyperbola" title="Fit a hyperbola to measure velocity (V)"><span class="glyph">◠</span>Hyperbola</button>
+    <button class="tool" data-tool="measure"   title="Measure distance and depth (M)"><span class="glyph">↔</span>Measure</button>
+  </div>
+  <div class="tool-sep"></div>
+  <div class="tool-group">
+    <button class="tool icon" id="zoomIn"  title="Zoom in">＋</button>
+    <button class="tool icon" id="zoomOut" title="Zoom out">－</button>
+    <button class="tool icon" id="zoomFit" title="Fit line to window (F)">⤢</button>
+  </div>
+  <div class="tool-sep"></div>
+  <div class="tool-group">
+    <button class="tool" id="candidatesToggle" title="Show automatically detected candidate regions and their shape diagnoses"><span class="glyph">▦</span>Candidates</button>
+  </div>
+  <div class="tool-sep"></div>
+  <div class="tool-group" id="channelButtons" aria-label="Channel"></div>
+  <div class="tool-sep"></div>
+  <label class="inline-field">
+    Palette
+    <select id="paletteSelect"></select>
+  </label>
+  <label class="inline-field">
+    Contrast
+    <input type="range" id="contrastRange" min="80" max="100" step="0.5" value="98">
+    <output id="contrastOut">98</output>
+  </label>
+  <div class="toolbar-right">
+    <span class="pill" id="chainPill">raw — no processing applied</span>
+  </div>
+</div>
+
+<main class="workspace">
+
+  <aside class="dock dock-left">
+    <section class="panel">
+      <h2>Project</h2>
+      <div class="tree" id="jobTree"><p class="empty">Scanning dataset…</p></div>
+    </section>
+
+    <section class="panel grow">
+      <h2>Signature library
+        <span class="hint" title="Confirmed hyperbolas cut from signed-off survey deliverables for this same corridor. Click one to compare it against what is on screen.">?</span>
+      </h2>
+      <p class="panel-note">Confirmed targets from real deliverables — compare against what you are seeing.</p>
+      <div class="signature-grid" id="signatureGrid"></div>
+    </section>
+  </aside>
+
+  <section class="viewer">
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="radargram"></canvas>
+      <div class="canvas-empty" id="canvasEmpty">Select a line from the project tree.</div>
+    </div>
+
+    <div class="ascan-strip">
+      <div class="ascan-head">
+        <span>A-scan</span>
+        <span class="mono" id="ascanLabel">—</span>
+      </div>
+      <canvas id="ascan"></canvas>
+    </div>
+
+    <div class="statusbar">
+      <span class="stat"><b>X</b><span id="statX">—</span></span>
+      <span class="stat"><b>T</b><span id="statT">—</span></span>
+      <span class="stat"><b>Z</b><span id="statZ">—</span></span>
+      <span class="stat"><b>Amp</b><span id="statAmp">—</span></span>
+      <span class="stat"><b>Trace</b><span id="statTrace">—</span></span>
+      <span class="stat flex"><b>v</b><span id="statV">—</span></span>
+      <span class="stat warn" id="statProvenance" title="">depth: assumed</span>
+    </div>
+  </section>
+
+  <aside class="dock dock-right">
+    <section class="panel accordion" data-open="true">
+      <h2 class="accordion-head">Processing<span class="chev">▾</span></h2>
+      <div class="accordion-body" id="processingPanel"></div>
+    </section>
+
+    <section class="panel accordion" data-open="true">
+      <h2 class="accordion-head">Velocity<span class="chev">▾</span></h2>
+      <div class="accordion-body" id="velocityPanel"></div>
+    </section>
+
+    <section class="panel accordion grow" data-open="true">
+      <h2 class="accordion-head">Targets<span class="chev">▾</span></h2>
+      <div class="accordion-body" id="targetsPanel"></div>
+    </section>
+
+    <section class="panel accordion" data-open="true">
+      <h2 class="accordion-head">Interpretation<span class="chev">▾</span></h2>
+      <div class="accordion-body" id="interpretPanel"></div>
+    </section>
+
+    <section class="panel accordion" data-open="false">
+      <h2 class="accordion-head">Line info<span class="chev">▾</span></h2>
+      <div class="accordion-body" id="infoPanel"></div>
+    </section>
+  </aside>
+
+</main>
+
+<div class="modal-backdrop" id="modalBackdrop" hidden>
+  <div class="modal" id="modal"></div>
+</div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

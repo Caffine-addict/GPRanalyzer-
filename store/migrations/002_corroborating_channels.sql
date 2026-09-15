@@ -1,0 +1,11 @@
+-- Evidence gained `corroborating_channels`: how many independent receivers recorded a target and
+-- agreed it is there. Without persisting it, a finding read back from the store loses the single
+-- strongest piece of evidence it had, and evidence/quality.py silently regrades it from QL-B1 to
+-- QL-B2 — a real downgrade caused purely by a round trip through storage.
+--
+-- DEFAULT 1 without NOT NULL, deliberately: DuckDB rejects ALTER TABLE ... ADD COLUMN with a
+-- constraint outright ("Adding columns with constraints not yet supported"), and the first attempt
+-- here used NOT NULL DEFAULT 1, which made the store fail to open at all. DEFAULT alone does the
+-- job — rows written before this column existed genuinely had one channel's worth of evidence, and
+-- DuckDB backfills them to 1, which is the honest value rather than a null to be guessed at.
+ALTER TABLE findings ADD COLUMN corroborating_channels INTEGER DEFAULT 1;

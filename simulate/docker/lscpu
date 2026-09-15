@@ -1,0 +1,11 @@
+#!/bin/sh
+# lscpu wrapper for ARM Linux (Docker on Apple Silicon, AWS Graviton).
+#
+# There lscpu prints "Socket(s): -" and counts cores per *cluster* rather than per
+# socket. gprMax's host-information probe (gprMax/utilities.py, get_host_info) parses
+# both as integers and crashes before any simulation starts. This wrapper, earlier on
+# PATH than /usr/bin/lscpu, supplies the numbers it expects and changes nothing else;
+# gprMax's own source stays untouched.
+out=$(/usr/bin/lscpu "$@")
+printf '%s\n' "$out" | sed 's/^Socket(s):[[:space:]]*-[[:space:]]*$/Socket(s):                               1/'
+printf '%s\n' "$out" | grep -q '^Core(s) per socket:' || echo "Core(s) per socket:                      $(nproc)"

@@ -14,10 +14,8 @@ from pathlib import Path
 
 from core.config import ReplaySourceConfig
 from core.contracts import ScanFrame, SourceCapabilities
-from parsers.base import get_parser
+from parsers.base import get_parser, registered_extensions
 from sources.base import ScanSource
-
-_SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
 class ReplaySource(ScanSource):
@@ -40,10 +38,14 @@ class ReplaySource(ScanSource):
     def _frame_paths(self) -> list[Path]:
         if not self._directory.exists():
             raise FileNotFoundError(f"replay directory not found: {self._directory}")
+        # Derived from the parser registry rather than a second, independent extension list —
+        # a format that can be parsed (parsers/image.py, parsers/spr.py, ...) is automatically
+        # replayable; nothing here needs editing when a new parser registers.
+        supported = registered_extensions()
         paths = sorted(
             p
             for p in self._directory.iterdir()
-            if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTENSIONS
+            if p.is_file() and p.suffix.lower().lstrip(".") in supported
         )
         if not paths:
             raise FileNotFoundError(f"no supported scan files found in: {self._directory}")

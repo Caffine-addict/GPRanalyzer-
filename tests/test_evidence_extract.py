@@ -56,6 +56,15 @@ def _detection(bbox=(100.0, 200.0, 150.0, 260.0), confidence: float = 0.8) -> De
     return Detection(class_name="cavities", confidence=confidence, bbox_xyxy=bbox)
 
 
+_N_TRACES, _N_SAMPLES = 384, 256
+_IMAGE_SHAPE = (640, 640)  # render.bscan.TARGET_SIZE x TARGET_SIZE
+
+
+def _rendered_box(t0: int, t1: int, s0: int, s1: int) -> tuple[float, float, float, float]:
+    """A bbox in the rendered-image space covering native traces [t0, t1) and samples [s0, s1)."""
+    return (t0 / _N_TRACES * 640, s0 / _N_SAMPLES * 640, t1 / _N_TRACES * 640, s1 / _N_SAMPLES * 640)
+
+
 def _replay_frame(**overrides) -> ScanFrame:
     base = {
         "source_type": "replay",
@@ -134,9 +143,68 @@ def test_depth_not_calibrated_when_has_calibrated_depth_false_even_if_others_tru
     assert ev.depth_confidence == "estimated"
 
 
-def test_depth_unavailable_when_frame_has_no_image() -> None:
+def test_depth_unavailable_when_frame_has_no_image_and_no_image_shape() -> None:
+    # No image_shape given -> no known mapping from the bbox (in whatever space it's in)
+    # onto frame.traces' samples, so this stays "unavailable" rather than guessing.
     detection = _detection()
     frame = _replay_frame(image=None, traces=np.zeros((10, 500)))
+    ev = extract_evidence(detection, frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG)
+    assert ev.depth_confidence == "unavailable"
+    assert ev.depth_m is None
+
+
+def test_depth_estimated_for_traces_only_frame_via_box_in_traces_reconciliation() -> None:
+    # The coordinate-space fix: image_shape lets a traces-only frame's rendered-image bbox be
+    # rescaled onto native samples (detect.refine.box_in_traces), instead of "unavailable".
+    # Exact-value assertion against the same formula test_depth_calibrated_formula_matches_
+    # expected_value already pins, just with sample_index derived via the rescale this time.
+    detection = _detection(bbox=_rendered_box(100, 110, 150, 170))  # sample centre = (150+170)/2 = 160
+    traces = np.zeros((_N_TRACES, _N_SAMPLES))
+    frame = _replay_frame(image=None, traces=traces, sample_interval_ns=0.1, dielectric_assumed=9.0)
+    ev = extract_evidence(
+        detection, frame, _UNCALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+
+    sample_index = 160.0
+    two_way_travel_time_ns = sample_index * 0.1
+    velocity_m_per_ns = 0.2998 / math.sqrt(9.0)
+    expected_depth_m = (two_way_travel_time_ns * velocity_m_per_ns) / 2.0
+
+    assert ev.depth_confidence == "estimated"  # a real formula, but SPR_MEDIUM_DIELECTRIC is assumed, not measured
+    assert ev.depth_m == pytest.approx(expected_depth_m)
+
+
+def test_depth_calibrated_for_traces_only_frame_when_capabilities_say_so() -> None:
+    detection = _detection(bbox=_rendered_box(100, 110, 150, 170))
+    traces = np.zeros((_N_TRACES, _N_SAMPLES))
+    frame = _replay_frame(image=None, traces=traces, sample_interval_ns=0.1, dielectric_assumed=9.0)
+    ev = extract_evidence(
+        detection, frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+    assert ev.depth_confidence == "calibrated"
+
+
+def test_depth_falls_back_to_the_crude_estimate_for_traces_only_frame_without_header_data() -> None:
+    # image_shape is given (a render did happen) but the frame carries no sample_interval_ns/
+    # dielectric_assumed at all -- same crude fraction*assumed_max_depth_m fallback as the
+    # image-frame case, not "unavailable" (the position is still knowable, just not the physics).
+    detection = _detection(bbox=_rendered_box(100, 110, 0, _N_SAMPLES // 2))  # sample centre = fraction 0.25
+    traces = np.zeros((_N_TRACES, _N_SAMPLES))
+    frame = _replay_frame(image=None, traces=traces)
+    ev = extract_evidence(
+        detection, frame, _UNCALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+    assert ev.depth_confidence == "estimated"
+    assert ev.depth_m == pytest.approx(0.25 * _EVIDENCE_CONFIG.assumed_max_depth_m, rel=0.05)
+
+
+def test_depth_unavailable_for_traces_only_frame_when_image_shape_is_not_given() -> None:
+    # A source that supplies traces without ever having rendered an image from them (no
+    # detection could have run, so no bbox coordinate space exists to reconcile) still falls
+    # back to "unavailable" rather than guessing a mapping.
+    detection = _detection()
+    traces = np.zeros((_N_TRACES, _N_SAMPLES))
+    frame = _replay_frame(image=None, traces=traces, sample_interval_ns=0.1, dielectric_assumed=9.0)
     ev = extract_evidence(detection, frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG)
     assert ev.depth_confidence == "unavailable"
     assert ev.depth_m is None
@@ -273,9 +341,10 @@ def test_amplitude_unavailable_for_off_frame_bbox_with_no_overlap() -> None:
     assert ev.amplitude is None
 
 
-def test_amplitude_unavailable_for_traces_only_frame_without_true_amplitude_capability() -> None:
-    # Reachable today (image=None, has_true_amplitude=False), contrary to
-    # what used to be marked "unreachable" here.
+def test_amplitude_unavailable_for_traces_only_frame_without_image_shape() -> None:
+    # No image_shape given -> no known mapping from the bbox onto frame.traces, regardless
+    # of has_true_amplitude. Coordinate reconciliation needs image_shape specifically (see
+    # the image_shape-provided tests below) — this pins the still-conservative default.
     frame = _replay_frame(image=None, traces=np.zeros((10, 500)))
     ev = extract_evidence(_detection(), frame, _UNCALIBRATED_CAPS, _EVIDENCE_CONFIG)
     assert ev.amplitude_confidence == "unavailable"
@@ -283,16 +352,55 @@ def test_amplitude_unavailable_for_traces_only_frame_without_true_amplitude_capa
 
 
 def test_amplitude_unavailable_for_traces_only_frame_even_with_true_amplitude_capability() -> None:
-    # The critical case: has_true_amplitude=True alone must NOT be enough to
-    # trust bbox-as-traces-indices when frame.image is None — detection in
-    # that scenario ran against render/bscan.py's resized output, whose
-    # coordinate space has no known relationship to frame.traces' native
-    # shape. Falling back to "unavailable" here, not guessing, is what
-    # prevents a silently-wrong value being reported as "calibrated".
+    # has_true_amplitude=True alone must NOT be enough to trust bbox-as-native-traces-indices
+    # when frame.image is None and no image_shape was given — same "no image_shape" guard as
+    # the test above, just also varying has_true_amplitude to prove it isn't the gate here.
     frame = _replay_frame(image=None, traces=np.full((300, 500), 7.0))
     ev = extract_evidence(_detection(), frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG)
     assert ev.amplitude_confidence == "unavailable"
     assert ev.amplitude is None
+
+
+def test_amplitude_estimated_for_traces_only_frame_via_box_in_traces_reconciliation() -> None:
+    # The coordinate-space fix: image_shape lets a traces-only frame's rendered-image bbox be
+    # rescaled onto native (trace, sample) indices (detect.refine.box_in_traces) instead of
+    # "unavailable". A uniform array can't catch an axis swap, so the value differs by axis —
+    # see the swap-catching variant below for that.
+    detection = _detection(bbox=_rendered_box(100, 110, 150, 170))
+    traces = np.full((_N_TRACES, _N_SAMPLES), 7.0)
+    frame = _replay_frame(image=None, traces=traces)
+    ev = extract_evidence(
+        detection, frame, _UNCALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+    # has_true_amplitude is False on _UNCALIBRATED_CAPS: a real per-target reading from raw
+    # traces, but the source hasn't vouched the units are physically meaningful.
+    assert ev.amplitude_confidence == "estimated"
+    assert ev.amplitude == pytest.approx(7.0)
+
+
+def test_amplitude_calibrated_for_traces_only_frame_when_has_true_amplitude() -> None:
+    detection = _detection(bbox=_rendered_box(100, 110, 150, 170))
+    traces = np.full((_N_TRACES, _N_SAMPLES), 7.0)
+    frame = _replay_frame(image=None, traces=traces)
+    ev = extract_evidence(
+        detection, frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+    assert ev.amplitude_confidence == "calibrated"
+    assert ev.amplitude == pytest.approx(7.0)
+
+
+def test_amplitude_for_traces_only_frame_samples_correct_axis_not_swapped() -> None:
+    # traces is (n_traces, n_samples); box_in_traces returns (sample_slice, trace_slice), so
+    # indexing traces.T[rows, cols] is required — traces[rows, cols] directly would silently
+    # read the wrong region on a non-square box. Distinct value only where the box should land.
+    traces = np.zeros((_N_TRACES, _N_SAMPLES))
+    traces[100:110, 150:170] = 9.0  # (trace, sample) axes, matching the bbox below
+    detection = _detection(bbox=_rendered_box(100, 110, 150, 170))
+    frame = _replay_frame(image=None, traces=traces)
+    ev = extract_evidence(
+        detection, frame, _FULLY_CALIBRATED_CAPS, _EVIDENCE_CONFIG, image_shape=_IMAGE_SHAPE
+    )
+    assert ev.amplitude == pytest.approx(9.0)
 
 
 def test_depth_calibrated_rejects_non_positive_dielectric() -> None:

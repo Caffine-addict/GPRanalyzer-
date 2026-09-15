@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,19 +21,28 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
-import parsers.image  # noqa: F401 - registers the image parser as a side effect
+import parsers.image
+import parsers.spr  # noqa: F401 - registers the "rad"/"ra1"/"ra2" parsers as a side effect
 from api.connection_manager import ConnectionManager
 from api.schemas import finding_to_dict
 from api.survey_manager import SurveyManager
 from core.config import load_config
 from detect.model import Detector
 from reason.engine import GroqClient, ReasoningEngine
+from reports.generate import generate_report
 from sources.factory import create_source
 from store.duckdb_store import DuckDBStore
 
 logger = logging.getLogger(__name__)
+
+# Same safe-identifier charset core/annotation_io.py's _SAFE_JOB_NAME already established for
+# names used as path components — reused here for the same reason (survey_id lands in a
+# temp-file prefix and a response header in get_survey_report below).
+_SAFE_SURVEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
@@ -136,6 +147,43 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
     async def get_line_findings(line_id: str) -> list[dict[str, Any]]:
         store: DuckDBStore = app.state.store
         return [finding_to_dict(f) for f in store.get_findings_for_line_id(line_id)]
+
+    @app.get("/surveys/{survey_id}/report")
+    async def get_survey_report(survey_id: str) -> FileResponse:
+        # survey_id is client-controlled and goes into a temp-file prefix and a response
+        # header below — same safe-identifier charset core/annotation_io.py already
+        # established for job names used as path components, applied here too rather than
+        # relying on tempfile.mkstemp's incidental protection against path traversal.
+        if not _SAFE_SURVEY_ID.fullmatch(survey_id):
+            raise HTTPException(status_code=400, detail=f"invalid survey_id: {survey_id!r}")
+
+        store: DuckDBStore = app.state.store
+        manager: SurveyManager = app.state.survey_manager
+        # Checked two ways: survey_manager's in-memory record covers a survey still running
+        # in *this* process (which may have zero frames persisted yet), and store.survey_exists
+        # covers any survey that ever ran, including before a server restart — summary/findings
+        # can't distinguish "never existed" from "existed, zero findings" on their own.
+        if manager.get_survey(survey_id) is None and not store.survey_exists(survey_id):
+            raise HTTPException(status_code=404, detail=f"survey not found: {survey_id}")
+
+        # generate_report reads through the Store interface synchronously — same event-loop-
+        # thread constraint as every other store-touching handler here (see the comment above
+        # list_surveys). reportlab's rendering is CPU-bound and not async-native either way, so
+        # there is no safe executor offload that wouldn't also move the store calls off-thread.
+        fd, tmp_name = tempfile.mkstemp(suffix=".pdf", prefix=f"report_{survey_id}_")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            generate_report(survey_id, store, tmp_path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return FileResponse(
+            tmp_path,
+            media_type="application/pdf",
+            filename=f"{survey_id}_report.pdf",
+            background=BackgroundTask(tmp_path.unlink, missing_ok=True),
+        )
 
     @app.post("/surveys/{survey_id}/start")
     async def start_survey(survey_id: str, body: StartSurveyRequest | None = None) -> dict[str, Any]:

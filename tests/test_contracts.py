@@ -293,3 +293,30 @@ def test_source_capabilities_rejects_unrecognized_latency_class() -> None:
             has_true_amplitude=False,
             latency_class="instant",
         )
+
+
+# --- corroborating_channels (2026-09-14) ------------------------------------
+
+
+def test_evidence_defaults_to_one_corroborating_channel() -> None:
+    # One receiver saw it. That is the ordinary case, and it is not corroboration — so the default
+    # must be the weakest honest value, never an optimistic one.
+    ev = Evidence(**_base_evidence_kwargs())
+    assert ev.corroborating_channels == 1
+
+
+def test_evidence_accepts_a_real_corroboration_count() -> None:
+    kwargs = _base_evidence_kwargs()
+    kwargs["corroborating_channels"] = 3
+    assert Evidence(**kwargs).corroborating_channels == 3
+
+
+def test_evidence_rejects_fewer_than_one_corroborating_channel() -> None:
+    # A target was recorded at least once by definition. Zero is not a weaker claim, it is an
+    # impossible one — and it would understate the survey grade, which is the direction that
+    # hides real evidence rather than overstating it.
+    for impossible in (0, -1):
+        kwargs = _base_evidence_kwargs()
+        kwargs["corroborating_channels"] = impossible
+        with pytest.raises(ValueError, match="at least 1"):
+            Evidence(**kwargs)

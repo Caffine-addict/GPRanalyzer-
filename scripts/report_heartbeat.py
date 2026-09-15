@@ -78,7 +78,7 @@ def main() -> int:
         detector=detector,
         store=store,
         config=cfg,
-        emit=lambda finding, event_type: None,
+        emit=lambda finding_id, finding, event_type: None,
         survey_id=survey_id,
         reasoning_engine=reasoning_engine,
     )

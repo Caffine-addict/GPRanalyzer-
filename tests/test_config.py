@@ -48,7 +48,8 @@ def test_loads_all_fields_from_real_config() -> None:
     assert cfg.detection.weights_path == "weights/best.pt"
     assert cfg.detection.conf_threshold == 0.25
     assert cfg.detection.iou_threshold == 0.7
-    assert set(cfg.detection.classes) == {
+    assert cfg.detection.classes == ("point_reflector", "linear_reflector", "disturbed_or_void")
+    assert set(cfg.detection.taxonomy) == {
         "cavities",
         "elongated_linear_target",
         "intersecting_linear_and_point_reflector",
@@ -73,7 +74,12 @@ def test_loads_all_fields_from_real_config() -> None:
     assert cfg.risk.weights == {
         "elongated_linear_target": 1.0,
         "cavities": 0.9,
+        "clear_point_reflector": 0.7,
+        "intersecting_linear_and_point_reflector": 0.9,
+        "multiple_point_reflectors": 0.6,
+        "cluttered_multi_target": 0.5,
         "low_snr_point_reflector": 0.4,
+        "disturbed_zone": 0.3,
     }
     assert cfg.risk.default_weight == 0.2
     assert cfg.risk.low_max == 0.35
@@ -193,6 +199,24 @@ def test_risk_high_confidence_elongated_min_count_zero_raises(tmp_path: Path) ->
     raw = _raw_config()
     raw["risk"]["escalation"]["high_confidence_elongated_min_count"] = 0
     with pytest.raises(ConfigError, match="high_confidence_elongated_min_count"):
+        load_config(_write(raw, tmp_path))
+
+
+def test_a_duplicated_detection_class_name_raises(tmp_path: Path) -> None:
+    # detect/model.py drops any detection whose class isn't in this list, and the
+    # class-id order here has to match the trained checkpoint exactly — a silently
+    # accepted duplicate would either hide a copy-paste mistake or leave two class
+    # ids meaning the same name.
+    raw = _raw_config()
+    raw["detection"]["classes"] = [*raw["detection"]["classes"], raw["detection"]["classes"][0]]
+    with pytest.raises(ConfigError, match="detection.classes lists a class more than once"):
+        load_config(_write(raw, tmp_path))
+
+
+def test_a_duplicated_taxonomy_class_name_raises(tmp_path: Path) -> None:
+    raw = _raw_config()
+    raw["detection"]["taxonomy"] = [*raw["detection"]["taxonomy"], raw["detection"]["taxonomy"][0]]
+    with pytest.raises(ConfigError, match="detection.taxonomy lists a class more than once"):
         load_config(_write(raw, tmp_path))
 
 

@@ -78,7 +78,7 @@ def main() -> int:
     if reasoning_engine is None:
         print("reason: no GROQ_API_KEY in .env — running fast path only, no reasoning emission")
 
-    def emit(finding: Finding, event_type: str) -> None:
+    def emit(finding_id: int, finding: Finding, event_type: str) -> None:
         if event_type == "finding.created":
             print(
                 f"[{event_type}] {finding.evidence.detection_class} "

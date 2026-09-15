@@ -191,3 +191,54 @@ def test_evidence_with_unavailable_confidence_and_stray_value_cannot_reach_promp
     # build_evidence_block never needs to defend against it itself.
     with pytest.raises(ValueError, match="unavailable"):
         _evidence(depth_confidence="unavailable", depth_m=1.5)
+
+
+# --- corroboration reaches the model, and the third prompt (2026-09-14) ------
+
+
+def test_a_single_receiver_is_described_as_unconfirmed() -> None:
+    # "1" alone tells the model nothing. The first real run produced "the lack of prior survey
+    # passes means this is the first observation" about a target two receivers had just agreed on,
+    # because the count never reached the prompt at all.
+    block = build_evidence_block(_evidence())  # default is 1
+    line = next(line for line in block.splitlines() if "independent receivers" in line)
+    assert "1" in line
+    assert "only one" in line
+
+
+def test_two_receivers_are_described_as_the_strongest_evidence_available() -> None:
+    block = build_evidence_block(_evidence(corroborating_channels=2))
+    line = next(line for line in block.splitlines() if "independent receivers" in line)
+    assert "2" in line
+    assert "independently" in line
+    assert "only one" not in line
+
+
+def test_the_candidate_prompt_fills_every_placeholder() -> None:
+    # A third caller exists that neither existing prompt describes honestly: targets found by
+    # classical signal processing, with no human pick and no trained detector behind them.
+    path = _TEMPLATE_PATH.parent / "v1_candidate.txt"
+    prompt = build_prompt(_evidence(corroborating_channels=2), _risk(), path)
+    for placeholder in (
+        "{detection_class}",
+        "{detection_confidence}",
+        "{evidence_block}",
+        "{risk_level}",
+        "{risk_score}",
+        "{risk_rules_fired}",
+    ):
+        assert placeholder not in prompt, f"{placeholder} was never substituted"
+    assert "no person marked it" in prompt
+
+
+def test_the_candidate_prompt_refuses_to_let_fit_quality_become_certainty() -> None:
+    # The first real run had the model report a curve-fit R2 as "99% classifier confidence" and
+    # then call its own assessment high-confidence on that basis. There is no classifier.
+    text = (_TEMPLATE_PATH.parent / "v1_candidate.txt").read_text(encoding="utf-8")
+    assert "NOT a classifier score" in text
+    assert "never describe the assessment as high confidence" in text
+
+
+def test_the_pipeline_prompt_also_forbids_restating_confidence_as_certainty() -> None:
+    text = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "not a measure of how certain anyone is about what the object physically is" in text

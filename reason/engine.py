@@ -92,27 +92,57 @@ class ReasoningEngine:
         """Returns (result, latency_ms). result is None on a prompt-building error, timeout,
         parse failure, or any client-level error — reasoning is best-effort and a Finding
         must survive without it, no matter which stage fails.
+
+        A failure on the configured model is retried once on `reasoning.fallback_model` before
+        giving up. The fallback is a smaller, faster model, so it exists for the two failures a
+        live survey actually hits — the provider rate-limiting, and the primary model timing out
+        against `latency.reasoning_target_ms` — not for a bad prompt, which would fail the same
+        way twice. Prompt construction therefore sits outside the retry: if that is what broke,
+        there is nothing for a second model to do.
         """
         start = time.monotonic()
         try:
             prompt = build_prompt(evidence, risk, self._template_path)
-            raw = self._client.complete_json(
-                prompt,
-                schema=JSON_SCHEMA,
-                model=self._config.model,
-                temperature=self._config.temperature,
-                max_tokens=self._config.max_tokens,
-                timeout_s=self._config.timeout_s,
-                strict=self._config.strict_json,
-            )
-            result = parse_reasoning_response(raw)
         except Exception as e:  # noqa: BLE001 - reasoning is best-effort; deliberately catch-all
             latency_ms = (time.monotonic() - start) * 1000
             logger.warning(
-                "reason.failed latency_ms=%.2f error_type=%s error=%s", latency_ms, type(e).__name__, e
+                "reason.failed stage=prompt latency_ms=%.2f error_type=%s error=%s",
+                latency_ms,
+                type(e).__name__,
+                e,
             )
             return None, latency_ms
 
+        models = [self._config.model]
+        if self._config.fallback_model and self._config.fallback_model != self._config.model:
+            models.append(self._config.fallback_model)
+
+        for attempt, model in enumerate(models):
+            try:
+                raw = self._client.complete_json(
+                    prompt,
+                    schema=JSON_SCHEMA,
+                    model=model,
+                    temperature=self._config.temperature,
+                    max_tokens=self._config.max_tokens,
+                    timeout_s=self._config.timeout_s,
+                    strict=self._config.strict_json,
+                )
+                result = parse_reasoning_response(raw)
+            except Exception as e:  # noqa: BLE001 - reasoning is best-effort; deliberately catch-all
+                logger.warning(
+                    "reason.attempt_failed model=%s fallback_remaining=%d error_type=%s error=%s",
+                    model,
+                    len(models) - attempt - 1,
+                    type(e).__name__,
+                    e,
+                )
+                continue
+
+            latency_ms = (time.monotonic() - start) * 1000
+            logger.info("reason.success model=%s latency_ms=%.2f", model, latency_ms)
+            return result, latency_ms
+
         latency_ms = (time.monotonic() - start) * 1000
-        logger.info("reason.success latency_ms=%.2f", latency_ms)
-        return result, latency_ms
+        logger.warning("reason.failed stage=model latency_ms=%.2f models_tried=%s", latency_ms, models)
+        return None, latency_ms

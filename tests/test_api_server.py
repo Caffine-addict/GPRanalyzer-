@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -277,6 +278,115 @@ def test_survey_findings_and_summary_reflect_real_detections(tmp_path: Path) -> 
         line_response = client.get("/lines/line_1/findings")
         assert line_response.status_code == 200
         assert len(line_response.json()) == 2
+
+
+def test_get_report_for_unknown_survey_returns_404(tmp_path: Path) -> None:
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+
+    with TestClient(app) as client:
+        response = client.get("/surveys/nonexistent/report")
+        assert response.status_code == 404
+
+
+def test_get_report_for_an_unsafe_survey_id_returns_400_not_404(tmp_path: Path) -> None:
+    # survey_id lands in a temp-file prefix and a response header — must be rejected as
+    # malformed input at the boundary, not silently treated as "just doesn't exist". A raw
+    # "../" in the path segment gets resolved by HTTP routing before reaching the handler,
+    # so use a percent-encoded space instead — reaches the handler unmodified and still
+    # violates the safe-identifier charset.
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+
+    with TestClient(app) as client:
+        response = client.get("/surveys/a%20b/report")
+        assert response.status_code == 400
+
+
+def test_get_survey_report_works_for_a_survey_persisted_in_the_store_but_not_in_memory(
+    tmp_path: Path,
+) -> None:
+    # Simulates a report request after a server restart: the survey ran (frames are
+    # persisted), but SurveyManager's in-memory record for it doesn't exist in *this*
+    # process — store.survey_exists must be enough on its own for the 404 check to pass.
+    from core.contracts import ScanFrame
+
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+
+    with TestClient(app) as client:
+        app.state.store.save_frame(
+            "old-survey",
+            "line_1",
+            ScanFrame(
+                source_type="replay",
+                provenance={},
+                image=np.zeros((10, 10), dtype=np.uint8),
+                position=None,
+                position_source="unknown",
+            ),
+        )
+        assert app.state.survey_manager.get_survey("old-survey") is None  # never started this process
+
+        response = client.get("/surveys/old-survey/report")
+        assert response.status_code == 200
+        assert response.content.startswith(b"%PDF")
+
+
+def test_get_survey_report_returns_a_real_pdf_with_the_findings(tmp_path: Path) -> None:
+    from pypdf import PdfReader
+
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 2)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+
+    with TestClient(app) as client:
+        app.state.survey_manager._detector = _FakeDetector()
+        start = client.post("/surveys/survey-1/start")
+        assert start.status_code == 200
+        time.sleep(0.3)  # let the near-instant survey finish
+
+        response = client.get("/surveys/survey-1/report")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.content.startswith(b"%PDF")
+
+        reader = PdfReader(BytesIO(response.content))
+        text = "\n".join(page.extract_text() for page in reader.pages)
+        assert "survey-1" in text
+        assert "cavities" in text
+
+
+def test_get_survey_report_cleans_up_its_temp_file_after_streaming(tmp_path: Path) -> None:
+    # generate_report writes to a real tempfile.mkstemp() file (outside tmp_path, in the OS
+    # temp dir) that FileResponse streams from; nothing else in this test file checks that the
+    # BackgroundTask which deletes it afterwards is actually wired up -- a version that dropped
+    # `background=BackgroundTask(...)` would still pass test_get_survey_report_returns_a_real_
+    # pdf_with_the_findings above (the download itself is unaffected) while leaking one
+    # `report_<survey_id>_*.pdf` file per request forever.
+    import glob
+    import tempfile
+
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+
+    pattern = str(Path(tempfile.gettempdir()) / "report_survey-1_*.pdf")
+    assert glob.glob(pattern) == []  # nothing stray from a previous run
+
+    with TestClient(app) as client:
+        app.state.survey_manager._detector = _FakeDetector()
+        start = client.post("/surveys/survey-1/start")
+        assert start.status_code == 200
+        time.sleep(0.3)  # let the near-instant survey finish
+
+        response = client.get("/surveys/survey-1/report")
+        assert response.status_code == 200
+
+    assert glob.glob(pattern) == []
 
 
 def test_websocket_disconnect_removes_connection_from_manager(tmp_path: Path) -> None:
