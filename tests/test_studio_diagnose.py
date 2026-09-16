@@ -117,6 +117,88 @@ def test_rerunning_replaces_rather_than_appends(tmp_path: Path, _one_channel: No
     assert len(written) == 1
 
 
+def test_second_call_reads_the_cache_instead_of_recomputing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # studio/candidates.py calls diagnose_job on every /candidates request with no cache of
+    # its own — this is the fix: reopening an unchanged job must not re-run the RANSAC fit.
+    frame = _frame()
+    calls = {"n": 0}
+
+    def _counting_load_frame(job_dir, ext):
+        calls["n"] += 1
+        return frame
+
+    monkeypatch.setattr(session, "channel_path", lambda job_dir, ext: job_dir / f"Single-01.{ext}")
+    monkeypatch.setattr(diagnose.session, "load_frame", _counting_load_frame)
+
+    job_dir = tmp_path / "Job_0006"
+    job_dir.mkdir()
+    (job_dir / "Single-01.RAD").write_bytes(b"stub")
+    box_store.add_box("Job_0006", channel="RAD", x=40, y=25, w=40, h=40)
+
+    first = diagnose.diagnose_job(job_dir)
+    calls_after_first = calls["n"]
+    second = diagnose.diagnose_job(job_dir)
+
+    assert calls["n"] == calls_after_first  # no new channel load on the second call
+    assert second == first
+
+
+def test_adding_a_box_invalidates_the_cache(tmp_path: Path, _one_channel: None) -> None:
+    job_dir = tmp_path / "Job_0007"
+    job_dir.mkdir()
+    (job_dir / "Single-01.RAD").write_bytes(b"stub")
+    box_store.add_box("Job_0007", channel="RAD", x=40, y=25, w=40, h=40)
+
+    first = diagnose.diagnose_job(job_dir)
+    assert len(first) == 1
+
+    box_store.add_box("Job_0007", channel="RAD", x=20, y=20, w=15, h=30)
+    second = diagnose.diagnose_job(job_dir)
+    assert len(second) == 2  # the new box must actually be measured, not hidden by stale cache
+
+
+def test_force_true_recomputes_even_when_the_cache_is_valid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frame = _frame()
+    calls = {"n": 0}
+
+    def _counting_load_frame(job_dir, ext):
+        calls["n"] += 1
+        return frame
+
+    monkeypatch.setattr(session, "channel_path", lambda job_dir, ext: job_dir / f"Single-01.{ext}")
+    monkeypatch.setattr(diagnose.session, "load_frame", _counting_load_frame)
+
+    job_dir = tmp_path / "Job_0008"
+    job_dir.mkdir()
+    (job_dir / "Single-01.RAD").write_bytes(b"stub")
+    box_store.add_box("Job_0008", channel="RAD", x=40, y=25, w=40, h=40)
+
+    diagnose.diagnose_job(job_dir)
+    calls_after_first = calls["n"]
+    diagnose.diagnose_job(job_dir, force=True)
+    assert calls["n"] > calls_after_first  # force=True must not read the cache
+
+
+def test_a_corrupted_cache_file_falls_back_to_recomputing_rather_than_raising(
+    tmp_path: Path, _one_channel: None
+) -> None:
+    job_dir = tmp_path / "Job_0009"
+    job_dir.mkdir()
+    (job_dir / "Single-01.RAD").write_bytes(b"stub")
+    box_store.add_box("Job_0009", channel="RAD", x=40, y=25, w=40, h=40)
+
+    diagnose.diagnose_job(job_dir)
+    diagnose._diagnoses_path("Job_0009").write_text("not valid json at all {{{")
+
+    # Must not raise — a speed path failing must degrade to the correct, slower path.
+    result = diagnose.diagnose_job(job_dir)
+    assert len(result) == 1
+
+
 def test_an_unsafe_job_name_cannot_escape_the_annotations_directory() -> None:
     for unsafe in ("../etc", "", ".hidden", "a\\..\\evil"):
         with pytest.raises(ValueError, match="unsafe job name"):

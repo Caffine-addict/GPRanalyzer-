@@ -40,7 +40,11 @@ def main(argv: list[str]) -> int:
         job_dirs = [Path(argv[1])]
 
     for job_dir in job_dirs:
-        results = diagnose_job(job_dir)
+        # force=True: this CLI exists specifically to produce a fresh measurement (a code
+        # change to the diagnosis logic, or a re-run someone wants to trust) — unlike
+        # studio/candidates.py's per-request read path, silently serving a cached result here
+        # would defeat the point of running it.
+        results = diagnose_job(job_dir, force=True)
         by_class: dict[str | None, int] = {}
         for diagnosis in results:
             by_class[diagnosis.suggested_class] = by_class.get(diagnosis.suggested_class, 0) + 1

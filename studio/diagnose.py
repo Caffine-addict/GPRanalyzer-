@@ -34,14 +34,45 @@ def _diagnoses_path(job_name: str) -> Path:
     return safe_job_dir(_ANNOTATIONS_ROOT, job_name) / "diagnoses.json"
 
 
-def diagnose_job(job_dir: Path) -> list[Diagnosis]:
+def _cached_diagnoses(job_name: str) -> list[Diagnosis] | None:
+    """The last-written diagnoses, if they're at least as new as boxes.json — None otherwise.
+
+    `list_candidates` (studio/candidates.py) calls diagnose_job on every `/candidates` request
+    with no cache, so a job with real candidate counts (measured: ~23ms/box, ~1.5s on a 64-box
+    job) re-runs the RANSAC fit on every click. This makes reopening the same, unchanged job
+    read the file diagnose_job already writes instead of recomputing. A malformed or
+    outdated-schema cache file falls back to recomputing rather than raising — this is a speed
+    path, not a correctness one.
+    """
+    diagnoses_path = _diagnoses_path(job_name)
+    boxes_file = box_store.boxes_path(job_name)
+    if not diagnoses_path.exists():
+        return None
+    if boxes_file.exists() and boxes_file.stat().st_mtime > diagnoses_path.stat().st_mtime:
+        return None  # a box was added/changed since the last diagnosis run
+    try:
+        raw = json.loads(diagnoses_path.read_text(encoding="utf-8"))
+        return [Diagnosis(**d) for d in raw]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+
+
+def diagnose_job(job_dir: Path, *, force: bool = False) -> list[Diagnosis]:
     """Diagnose every box in `job_dir`'s job, write the file, and return the diagnoses.
 
     A box whose channel is missing from the job, or whose channel carries no traces, is
     skipped rather than guessed at — the box is still a real region someone flagged, and
     `studio/candidates.py` keeps returning it with its diagnostic fields empty.
+
+    Reads a cached result when `boxes.json` hasn't changed since the last run — pass
+    `force=True` to always recompute (e.g. a CLI re-run after changing the measurement code
+    itself, where the box set is unchanged but the diagnosis logic isn't).
     """
     job_name = job_dir.name
+    if not force:
+        cached = _cached_diagnoses(job_name)
+        if cached is not None:
+            return cached
     boxes = box_store.load_boxes(job_name)
 
     frames_by_channel = {}

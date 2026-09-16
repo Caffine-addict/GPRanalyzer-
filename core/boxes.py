@@ -40,12 +40,14 @@ class Box:
     note: str = ""
 
 
-def _boxes_path(job_name: str) -> Path:
+def boxes_path(job_name: str) -> Path:
+    """Public so callers can check this file's mtime (e.g. studio/diagnose.py's cache)
+    without reaching into this module's storage layout."""
     return safe_job_dir(_ANNOTATIONS_ROOT, job_name) / "boxes.json"
 
 
 def load_boxes(job_name: str) -> list[Box]:
-    path = _boxes_path(job_name)
+    path = boxes_path(job_name)
     if not path.exists():
         return []
     data = json.loads(path.read_text())
@@ -53,7 +55,7 @@ def load_boxes(job_name: str) -> list[Box]:
 
 
 def _save(job_name: str, boxes: list[Box]) -> None:
-    write_text_atomically(_boxes_path(job_name), json.dumps({"boxes": [asdict(b) for b in boxes]}, indent=2))
+    write_text_atomically(boxes_path(job_name), json.dumps({"boxes": [asdict(b) for b in boxes]}, indent=2))
 
 
 def add_box(job_name: str, *, channel: str, x: float, y: float, w: float, h: float, note: str = "") -> Box:

@@ -205,6 +205,43 @@ def test_csv_export_names_the_file_after_the_job(client: TestClient, job: str) -
     assert "velocity_source" in response.text
 
 
+def test_csv_export_carries_chainage_class_and_grade_but_no_coordinate(
+    client: TestClient, job: str
+) -> None:
+    import csv as csv_module
+    import io
+
+    pick = _make_pick(client, job, velocity_source="fitted", fit_r2=0.98)
+    response = client.get(f"/api/jobs/{job}/picks.csv")
+    assert response.status_code == 200
+
+    rows = list(csv_module.reader(io.StringIO(response.text)))
+    header, data_row = rows[0], rows[1]
+    assert header == [
+        "id", "channel", "trace", "sample", "chainage_m", "depth_m", "depth_confidence",
+        "taxonomy_class", "class_rule", "corroborating_channels",
+        "risk_level", "risk_score", "quality_level", "quality_rationale",
+        "velocity_m_per_ns", "velocity_source", "dielectric", "fit_r2",
+        "label", "note", "created_at",
+    ]
+    # No lat/lon or any coordinate column — the export must not carry a position this
+    # project's GPS data cannot back up (see interpret.export_target_list's docstring).
+    assert not any("lat" in col or "lon" in col or "coord" in col for col in header)
+
+    row = dict(zip(header, data_row, strict=True))
+    assert row["id"] == pick["id"]
+    # trace=150.0 * trace_spacing_m=0.025 (SPR_SHAFT_INTERVAL on all four delivered lines)
+    assert float(row["chainage_m"]) == pytest.approx(150.0 * 0.025)
+    assert row["depth_confidence"] == "calibrated"  # velocity_source="fitted"
+    assert row["taxonomy_class"] in {
+        "cavities", "elongated_linear_target", "intersecting_linear_and_point_reflector",
+        "strong_high_contrast_reflector", "multiple_point_reflectors", "low_snr_point_reflector",
+        "cluttered_multi_target", "disturbed_zone", "clear_point_reflector",
+    }
+    assert row["quality_level"]  # a real PAS 128 label, not empty
+    assert int(row["corroborating_channels"]) >= 1
+
+
 def test_candidates_endpoint_joins_boxes_to_their_diagnoses(client: TestClient, job: str) -> None:
     body = client.get(f"/api/jobs/{job}/candidates").json()
     assert isinstance(body, list)

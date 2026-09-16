@@ -37,7 +37,6 @@ from reason.engine import GroqClient, ReasoningEngine
 from reason.prompt import build_evidence_block
 from reference import library as reference_library
 from studio import candidates as candidate_store
-from studio import corroborate as corroboration
 from studio import interpret, render, session, velocity
 from studio import palette as palette_module
 from studio import picks as pick_store
@@ -311,10 +310,17 @@ def remove_pick(request: Request, job_name: str, pick_id: str) -> dict:
 
 @app.get("/api/jobs/{job_name}/picks.csv", response_class=PlainTextResponse)
 def export_picks(request: Request, job_name: str) -> PlainTextResponse:
-    """Target list as CSV, velocity provenance included on every row."""
-    _job(request, job_name)
+    """Target list as CSV: chainage, measured class, depth with its provenance, PAS 128 grade.
+
+    No map coordinate — see interpret.export_target_list's docstring for why: the onboard
+    GPS in this project's delivered data cannot be trusted to place a target, and chainage
+    (wheel-encoder distance along the line) is the position measurement that has actually
+    been checked.
+    """
+    job_dir = _job(request, job_name)
+    config = _studio_config(request)
     buffer = io.StringIO()
-    csv.writer(buffer).writerows(pick_store.to_csv_rows(pick_store.load_picks(job_name)))
+    csv.writer(buffer).writerows(interpret.export_target_list(job_name, job_dir, config))
     return PlainTextResponse(
         buffer.getvalue(),
         headers={"Content-Disposition": f'attachment; filename="{job_name}_targets.csv"'},
@@ -397,32 +403,6 @@ def _interpretation_cache(request: Request) -> dict[str, dict]:
     return cache
 
 
-def _corroborating_channels(picks: list, target_id: str, trace_spacing_m: float) -> int:
-    """How many distinct channels independently saw this pick's target.
-
-    Built from every pick on the job, not just the one channel being interpreted — corroboration
-    across receivers is the entire point, so it cannot be computed from one channel's picks. A
-    pick that clusters with nothing returns 1: itself, seen once.
-
-    `trace_spacing_m` comes from the channel header (`SPR_SHAFT_INTERVAL`) rather than a constant:
-    it is 0.025 m on all four delivered lines, but hardcoding it here would silently produce wrong
-    positions for any job recorded with a different encoder setting.
-    """
-    apexes = [
-        corroboration.Apex(
-            id=pick.id,
-            channel=pick.channel,
-            position_m=pick.trace * trace_spacing_m,
-            depth_m=pick.depth_m,
-        )
-        for pick in picks
-    ]
-    for cluster in corroboration.corroborate(apexes):
-        if target_id in cluster.apex_ids:
-            return cluster.n_channels
-    return 1
-
-
 @app.post("/api/jobs/{job_name}/picks/{pick_id}/interpret")
 def interpret_target(request: Request, job_name: str, pick_id: str) -> dict:
     """What one picked target most likely is.
@@ -469,7 +449,7 @@ def interpret_target(request: Request, job_name: str, pick_id: str) -> dict:
     # target, or it writes "nothing has confirmed this" about a target two receivers just agreed
     # on. The evidence the model sees and the evidence the grade is computed from are then the
     # same object, which is the point.
-    channels = _corroborating_channels(picks, pick_id, info.trace_spacing_m)
+    channels = interpret.corroborating_channels(picks, pick_id, info.trace_spacing_m)
     evidence = replace(item.evidence, corroborating_channels=channels)
 
     engine = _reasoning_engine(request, config)

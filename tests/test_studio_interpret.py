@@ -135,3 +135,86 @@ def test_a_pick_on_another_channel_is_not_evidence_for_this_one() -> None:
     # Channels have different time axes; mixing them would put a target at a wrong depth.
     result = interpret.evidence_for_line((_pick(channel="RA1"),), _info(), _traces(), TAXONOMY)
     assert result == {}
+
+
+# --------------------------------------------------------------- corroborating_channels
+
+
+def test_corroborating_channels_returns_one_for_an_uncorroborated_pick() -> None:
+    picks = (_pick(id="p1", channel="RAD", trace=150.0, depth_m=0.45),)
+    assert interpret.corroborating_channels(picks, "p1", 0.025) == 1
+
+
+def test_corroborating_channels_counts_a_cluster_seen_on_two_channels() -> None:
+    picks = (
+        _pick(id="p1", channel="RAD", trace=150.0, depth_m=0.45),
+        _pick(id="p2", channel="RA1", trace=150.0, depth_m=0.45),
+    )
+    assert interpret.corroborating_channels(picks, "p1", 0.025) == 2
+    assert interpret.corroborating_channels(picks, "p2", 0.025) == 2
+
+
+def test_corroborating_channels_for_an_unknown_target_id_returns_one() -> None:
+    picks = (_pick(id="p1"),)
+    assert interpret.corroborating_channels(picks, "not-a-real-id", 0.025) == 1
+
+
+# --------------------------------------------------------------- export_target_list
+
+
+def _config():
+    from core.config import load_config
+
+    return load_config()
+
+
+def test_export_target_list_with_no_picks_returns_just_the_header(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import studio.picks as picks_module
+
+    monkeypatch.setattr(picks_module, "_ANNOTATIONS_ROOT", tmp_path / "annotations")
+    job_dir = tmp_path / "Job_empty"
+    job_dir.mkdir()
+    assert interpret.export_target_list("Job_empty", job_dir, _config()) == [interpret._EXPORT_HEADER]
+
+
+def test_export_target_list_has_no_coordinate_column() -> None:
+    # The GPS diagnostic (2026-09-15): 3 of 4 delivered lines' onboard GPS froze while
+    # reporting a healthy fix, and the one line that tracked disagreed with the wheel
+    # encoder by 12%, growing past a metre by the far end. No column in this export may
+    # claim a position more precise than chainage — see the function's own docstring.
+    assert not any(
+        "lat" in col or "lon" in col or "coord" in col for col in interpret._EXPORT_HEADER
+    )
+
+
+def test_export_target_list_skips_a_channel_whose_frame_no_longer_parses(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import studio.picks as picks_module
+
+    monkeypatch.setattr(picks_module, "_ANNOTATIONS_ROOT", tmp_path / "annotations")
+    job_dir = tmp_path / "Job_missing_channel"
+    job_dir.mkdir()
+    picks_module.add_pick(
+        "Job_missing_channel",
+        channel="RAD",
+        trace=150.0,
+        sample=90.0,
+        time_ns=9.0,
+        depth_m=0.45,
+        velocity_m_per_ns=0.1011,
+        velocity_source="fitted",
+        dielectric=8.79,
+        fit_r2=0.98,
+    )
+
+    def _raise(job_dir, ext):
+        raise ValueError("channel has no traces")
+
+    monkeypatch.setattr(interpret.session, "load_frame", _raise)
+
+    # Must not raise — one unreadable channel's picks are skipped, not the whole job's list.
+    result = interpret.export_target_list("Job_missing_channel", job_dir, _config())
+    assert result == [interpret._EXPORT_HEADER]
