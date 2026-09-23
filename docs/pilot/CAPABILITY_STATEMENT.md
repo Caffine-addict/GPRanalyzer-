@@ -16,14 +16,24 @@ faster and more consistently than doing it by eye alone:
   its depth comes from a wave velocity measured on that target, not assumed from an operator
   dial — and the system says so (`calibrated`) rather than letting an assumption pass as a
   measurement (`estimated`).
-- **Cross-channel corroboration.** Three independent receivers see the same ground; a target
-  confirmed on two or more is real evidence in a way a single detection on one line never is.
+- **Cross-channel corroboration.** Three frequency channels (RAD/RA1/RA2) from one antenna head
+  see the same ground from the same position; a target confirmed on two or more frequency bands
+  is real evidence in a way a single detection on one line never is — though, since all three
+  channels share one antenna position and pass, this is multi-frequency confirmation, not
+  independently-positioned receiver corroboration (see `docs/pilot/CHANNEL_IDENTITY.md`, checked
+  2026-09-23 — an earlier version of this statement said "independent receivers," which the
+  header data does not support).
 - **Plain-language interpretation**, from a language model that is explicitly instructed to say
   when it cannot tell one thing from another (a small stone from a small pipe, for instance) —
   and does, in practice, say exactly that rather than guessing with confidence.
-- **Industry-standard quality grading.** Every finding is graded on the PAS 128 / ASCE 38
-  ladder — the language a client already procures survey work in — rather than an in-house
-  confidence score nobody outside this project would recognise.
+- **Findings reported against PAS 128, and reported as ungraded.** Every finding is measured
+  against the ladder a client procures survey work in — and comes back `ungraded`, with the
+  reason and with what would have to change. No PAS 128 level is supportable here: QL-B1 needs
+  a second geophysical *technique* (three frequency channels of GPR are one), QL-B1/B2 are
+  accuracy bands nothing has been validated against, and every QL-B level needs a georeferenced
+  position this survey's GPS cannot provide. Saying so is the point — an in-house confidence
+  score that quietly implied a survey grade would be worse than no grade at all.
+  See `docs/pilot/CHANNEL_IDENTITY.md` and `evidence/quality.py`.
 - **A measured diagnostic finding about the survey equipment itself**: the onboard GPS on the
   delivered lines cannot currently place a target on a map (see `GPS_DIAGNOSTIC.md`) — found by
   actually checking it against the wheel encoder, not assumed to work because the receiver
@@ -42,7 +52,7 @@ faster and more consistently than doing it by eye alone:
   place anything — see `GPS_DIAGNOSTIC.md`. This is a finding from checking the actual data, not
   a design limitation that could be coded around.
 - **Not validated against ground truth.** Nothing found so far has been checked against an
-  excavation or a utility record. One target (`Job_0703`) is corroborated on two independent
+  excavation or a utility record. One target (`Job_0703`) is corroborated on two frequency
   channels, which is real evidence, but corroboration is not verification.
 - **Not able to tell a stone from a cable from one line.** This is physics, not a software gap:
   both draw the same hyperbola. The system says so rather than guessing.

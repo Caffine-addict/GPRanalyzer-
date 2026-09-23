@@ -78,8 +78,12 @@ that bulk output is position-and-class only and that depth comes from Studio pic
    from the header value means the sampling-interval assumption does not hold for this batch.
 3. Feed each line's fitted apexes through `studio/corroborate.py` and count targets seen on two
    or more channels. That count, not the raw box count, is the number worth showing anyone.
-4. Grade each with `evidence/quality.py`. Expect **QL-B4** for header-derived depth and **QL-B2**
-   for fitted-velocity picks; QL-B1 needs both a fitted velocity and cross-channel agreement.
+4. Grade each with `evidence/quality.py`. Expect **`ungraded`** for every finding, whatever the
+   evidence — no PAS 128 level is supportable without ground-truth accuracy validation and a
+   georeferenced horizontal position, and QL-B1/QL-B2 are unreachable by construction (three
+   frequency channels are one geophysical technique). The rationale still reports whether depth
+   was measured or assumed and how many channels agreed; `provisional_ceiling` says what would
+   have to change. See `evidence/quality.py`'s docstring.
 5. Only then talk about training. A trained detector needs labels, and the open question is
    still company question #1 and #6 in `COMPANY_QUESTIONS.md`.
 

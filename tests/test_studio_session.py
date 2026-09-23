@@ -62,7 +62,7 @@ def test_every_channel_reports_a_usable_geometry(job_dir: Path) -> None:
 
 
 def test_channels_are_ordered_shallow_to_deep(job_dir: Path) -> None:
-    # The three receivers differ by sampling interval — a longer interval buys
+    # The three frequency channels differ by sampling interval — a longer interval buys
     # a deeper window at coarser resolution.
     intervals = [channel.sample_interval_ns for channel in session.available_channels(job_dir)]
     assert intervals == sorted(intervals)

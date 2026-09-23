@@ -133,3 +133,55 @@ def test_concurrent_saves_to_one_job_all_land() -> None:
     for thread in threads:
         thread.join()
     assert sorted(p.label for p in picks.load_picks("Job_0703")) == sorted(f"t{i}" for i in range(16))
+
+
+# ------------------------------------------------ post_processed: three states, not two
+
+
+def test_post_processed_round_trips_as_true() -> None:
+    _add(post_processed=True)
+    assert picks.load_picks("Job_0703")[0].post_processed is True
+
+
+def test_post_processed_round_trips_as_false() -> None:
+    # Distinct from the True case *and* from the unrecorded case: False is a positive claim
+    # that the chain was checked and did nothing.
+    _add(post_processed=False)
+    assert picks.load_picks("Job_0703")[0].post_processed is False
+
+
+def test_an_unrecorded_chain_round_trips_as_none_not_false() -> None:
+    # This is the distinction the whole tri-state exists for. If it ever collapses to False,
+    # every pick made before the field existed starts claiming its data was raw.
+    _add()
+    stored = picks.load_picks("Job_0703")[0]
+    assert stored.post_processed is None
+    assert stored.post_processed is not False
+
+
+def test_a_pick_file_written_before_the_field_existed_still_loads(tmp_path: Path) -> None:
+    """Backward compatibility with stored user data, which is not re-creatable.
+
+    `annotations/<job>/picks.json` files predating `post_processed` have no such key. Loading
+    must default them to None ("nobody recorded it"), not fail and not assume False.
+    """
+    import json
+
+    legacy = {
+        "picks": [
+            {
+                "id": "abc123456789", "channel": "RAD", "trace": 150.0, "sample": 90.0,
+                "time_ns": 9.0, "depth_m": 0.45, "velocity_m_per_ns": 0.1011,
+                "velocity_source": "fitted", "dielectric": 8.79, "label": "old pick",
+                "note": "", "fit_r2": 0.98, "created_at": "2026-09-01T00:00:00+00:00",
+            }
+        ]
+    }
+    path = picks._picks_path("Job_0703")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(legacy))
+
+    loaded = picks.load_picks("Job_0703")
+    assert len(loaded) == 1
+    assert loaded[0].id == "abc123456789"
+    assert loaded[0].post_processed is None

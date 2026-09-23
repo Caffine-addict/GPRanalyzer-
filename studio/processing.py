@@ -299,6 +299,29 @@ def run_chain(
     return stack_traces(data, chain.stack_traces)
 
 
+def is_post_processed(chain: ProcessingChain) -> bool:
+    """Did this chain alter the samples? PAS 128's `P` suffix, derived rather than assumed.
+
+    The suffix describes the *data an interpretation was made from*, so anything that changes
+    what the operator sees counts — a time-zero shift and a stack change which samples line up
+    where, just as a gain or a filter changes their values. Only a chain that leaves every
+    sample exactly as recorded is un-suffixed.
+
+    Lives here, next to the chain it reads, so `evidence/quality.py` never has to import the
+    Studio: it takes the derived bool, not the chain.
+    """
+    defaults = ProcessingChain()
+    return (
+        chain.time_zero_sample != defaults.time_zero_sample
+        or chain.dewow
+        or chain.background_removal != "none"
+        or chain.bandpass
+        or chain.gain != "none"
+        or chain.stack_traces != defaults.stack_traces
+        or chain.migrate
+    )
+
+
 def chain_from_params(params: dict) -> ProcessingChain:
     """Build a chain from an untrusted request payload, rejecting unknown keys.
 

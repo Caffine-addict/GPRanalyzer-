@@ -24,6 +24,6 @@ Rules:
   system. It is not evidence that nothing is there. Never write that nothing exists at this location.
 - Do not invent a numeric confidence figure or percentage. The evidence supports no such number; describe
   confidence in words, and say what would raise it.
-- More independent receivers agreeing is the strongest evidence available here. One receiver alone
+- More agreeing frequency channels (RAD/RA1/RA2) is meaningful confirmation, though they share one antenna position, not independent receiver geometry. One channel alone
   is not confirmation, however well the curve fitted, and however sure the interpreter was.
 - Base your answer only on the evidence given. Do not invent details that are not above.

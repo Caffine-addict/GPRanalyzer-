@@ -49,7 +49,7 @@ def test_a_chain_of_near_neighbours_does_not_become_one_object() -> None:
 
 
 def test_two_fits_on_the_same_channel_are_not_corroboration() -> None:
-    # Same receiver, same time axis, same systematic error — agreement proves nothing.
+    # Same channel, same time axis, same systematic error — agreement proves nothing.
     apexes = [_apex("a", "RAD", 8.50, 1.30), _apex("b", "RAD", 8.55, 1.32)]
     [result] = corroborate(apexes)
     assert result.channels == ("RAD",)
@@ -202,7 +202,7 @@ def test_the_default_tolerances_are_the_documented_ones() -> None:
 def test_channels_that_disagree_about_permittivity_are_not_corroboration() -> None:
     """Agreeing on position and depth while disagreeing on the ground is a coincidence.
 
-    If two receivers really saw the same object, the wave crossed the same ground to reach it. On
+    If two frequency channels really saw the same object, the wave crossed the same ground to reach it. On
     the four real survey lines this single check cut 14 "corroborated" targets to 6 — the ones it
     removed included pairs whose implied permittivities differed by a factor of 20, which cannot
     both describe the same soil.
@@ -266,7 +266,7 @@ def test_the_permittivity_threshold_is_the_documented_one() -> None:
     assert MAX_PERMITTIVITY_RATIO == 2.0
 
 
-def test_one_weak_outlier_cannot_veto_two_strong_agreeing_receivers() -> None:
+def test_one_weak_outlier_cannot_veto_two_strong_agreeing_channels() -> None:
     """Job_0703 at 8.54 m, the project's known target, exactly as the real data produces it.
 
     RA1 at eps 8.34 on 77 inlier points and RA2 at eps 11.30 on 74 agree to a factor of 1.36. A
@@ -284,7 +284,7 @@ def test_one_weak_outlier_cannot_veto_two_strong_agreeing_receivers() -> None:
     assert result.corroborated is True
 
 
-def test_two_strong_receivers_that_really_disagree_are_still_blocked() -> None:
+def test_two_strong_channels_that_really_disagree_are_still_blocked() -> None:
     # Job_0720 at 8.91 m: eps 1.29 on 36 inliers against eps 4.79 on 33. Both well constrained,
     # genuinely different ground — the check must still refuse this one.
     apexes = [

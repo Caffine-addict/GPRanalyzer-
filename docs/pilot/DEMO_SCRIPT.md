@@ -41,7 +41,11 @@ anyone asks what this does before you get to show them.
 4. **Interpret it.** Read the written half aloud, specifically the hedge (e.g. "cannot be
    distinguished between these possibilities") — this is the honesty behaviour to point to when
    anyone asks "does it know what it is." It doesn't, and it says so.
-5. **Export the target list** (`Export CSV`). Show chainage, class, PAS 128 grade — and say,
+5. **Export the target list** (`Export CSV`). Show chainage, class, and the PAS 128 column —
+   which reads `ungraded` on every row, deliberately, with the reason beside it and the
+   `quality_ceiling` column saying what would have to change. Lead with that rather than
+   letting someone find it: it is the same honesty as the depth labels, applied to the
+   grading standard. Then say,
    plainly, that there's no coordinate column, and why: hand them `GPS_DIAGNOSTIC.md`. This is
    a genuine finding about their equipment, not a software gap, and it's the strongest thing in
    the whole session if you frame it as a finding rather than an apology.

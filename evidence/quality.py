@@ -1,34 +1,47 @@
-"""Evidence -> a survey quality level the industry already understands (PAS 128 / ASCE 38).
+"""Evidence -> the PAS 128 survey quality level it supports, which today is: none of them.
 
-Every number this system reports has a confidence label (`core/contracts.py`), which is the
+Every number this system reports carries a confidence label (`core/contracts.py`), which is the
 right internal discipline but not the language a client procures in. Utility surveys are
-specified and accepted against a published ladder, and an automated interpretation has to land
-somewhere on it:
+specified and accepted against a published ladder, so an automated interpretation has to say
+where it lands on it — including, as here, that it lands nowhere yet.
 
-- **PAS 128:2022** (UK): QL-D is records only; QL-C is records reconciled with site features;
-  QL-B4 up to QL-B1 are geophysical detection with increasing confidence; QL-A is physical
-  verification by excavation. QL-B1 is the top *detection* grade and requires the utility to be
-  traced continuously with position **and** depth well supported — in practice corroborated by
-  more than one method. A `P` suffix (e.g. `QL-B2P`) marks that the data was post-processed,
-  which raises interpretability on cluttered sites.
-- **ASCE 38-22** (US): the same QL-D to QL-A shape, with QL-A meaning verified by exposure.
+**PAS 128:2022** (UK): QL-D is records only; QL-C is records reconciled with site features;
+QL-B4 up to QL-B1 are geophysical detection with increasing confidence; QL-A is physical
+verification by excavation. A `P` suffix (e.g. `QL-B2P`) marks post-processed data.
 
-Two rules this module will not break, because breaking them is how a survey tool becomes a
-liability:
+## Why this module grades almost nothing
 
-1. **QL-A is unreachable from here, always.** It means somebody exposed the utility. No amount
-   of radar, corroboration or reasoning earns it. `verified_by_excavation` exists so a human can
-   record that it happened out of band, and is never inferred.
-2. **QL-B1 needs depth that was measured, not assumed.** On this project that means a velocity
-   fitted from the target's own hyperbola (`depth_confidence == "calibrated"`), plus agreement
-   from an independent channel. A header permittivity typed in on site is an assumption, and an
-   assumption cannot support the highest detection grade however good the detector is.
+Three independent blockers, each on its own fatal to a QL-B claim from this system:
 
-The research consensus behind this: the 2026 review of GPR utility detection identifies
-"event-utility mismatch" — detecting a hyperbola is not identifying a utility — as a primary
-obstacle, and names uncertainty quantification as a required direction. A quality level is that
-uncertainty, expressed in the form the industry already audits against. None of the commercial
-AI-GPR products surveyed map their output to these levels.
+1. **B1 needs more than one geophysical *technique*.** In practice EML plus GPR. RAD/RA1/RA2
+   are three frequency channels of one antenna — one technique, however well they agree (see
+   `docs/pilot/CHANNEL_IDENTITY.md`). B1 is therefore unreachable here by construction.
+2. **B1 and B2 are accuracy bands, and no accuracy has ever been demonstrated.** They commit to
+   stated position and depth tolerances. Nothing this project has found has been checked
+   against an excavation or a utility record, so there is no error distribution to compare
+   against any tolerance. Claiming the band would be asserting an accuracy nobody has measured.
+3. **There is no georeferenced horizontal position at all.** Every QL-B level describes a
+   position on a site plan. This system reports chainage along a line whose endpoints have not
+   been surveyed in, and the onboard GPS cannot place it (`docs/pilot/GPS_DIAGNOSTIC.md`). A
+   distance along an unplaced line is not a position on a drawing.
+
+So `quality_level()` returns `"ungraded"` for every input, carrying the reason and the evidence
+it does have. `provisional_ceiling` names what could eventually be supported and what has to
+change first — a condition, never a grade. A grade only appears when a person supplies one
+through `quality_from_external()`, or records an excavation via `verified_by_excavation`.
+
+## What is deliberately NOT here
+
+No ASCE 38 mapping. An earlier version of this module claimed ASCE 38-22 was "the same QL-D to
+QL-A shape" and labelled one output as satisfying both standards. That was wrong in kind, not
+just in detail: ASCE 38's QL-B covers horizontal position from surface geophysics, and does not
+certify depth there at all, while this module's entire ladder was depth-driven. One label
+cannot stand for both standards. If ASCE output is ever needed it belongs in its own module
+with its own logic.
+
+The grading rules above are the minimum needed to stop the system overclaiming. They are not a
+faithful implementation of PAS 128:2022, and must not be extended into one from memory — nobody
+on this project has worked from the standard's text. Get the document before building further.
 """
 
 from __future__ import annotations
@@ -38,9 +51,11 @@ from typing import Literal
 
 from core.contracts import Evidence
 
-QualityLevel = Literal["QL-D", "QL-C", "QL-B4", "QL-B3", "QL-B2", "QL-B1", "QL-A"]
+QualityLevel = Literal["ungraded", "QL-D", "QL-C", "QL-B4", "QL-B3", "QL-B2", "QL-B1", "QL-A"]
 
 # Ordered weakest to strongest, so a caller can compare or sort without hardcoding the ladder.
+# "ungraded" is deliberately absent: it is the absence of a grade, not a rung below the lowest
+# one, and putting it here would let it be sorted as though it ranked.
 QUALITY_LADDER: tuple[QualityLevel, ...] = (
     "QL-D",
     "QL-C",
@@ -51,53 +66,119 @@ QUALITY_LADDER: tuple[QualityLevel, ...] = (
     "QL-A",
 )
 
+# Levels this system's own evidence can never support, for the reasons in the module docstring.
+# `quality_level()` cannot return these; only `quality_from_external()` can, where a person is
+# asserting what a different survey concluded.
+GPR_UNREACHABLE_LEVELS: frozenset[str] = frozenset({"QL-B1", "QL-B2"})
+
 _RATIONALE_VERIFIED = "verified by physical exposure, recorded by a person — not inferred here"
+
+# The two blockers that no amount of better radar work can clear on its own. Stated once so the
+# rationale and the provisional ceiling cannot drift apart.
+_WHY_UNGRADED = (
+    "not graded — GPR alone is a single geophysical technique, there is no ground-truth accuracy "
+    "validation, and there is no georeferenced horizontal position"
+)
+_CEILING = (
+    "could support at most QL-B2P, and only once: (1) depth accuracy is validated against "
+    "ground truth across the depth range, (2) the line is georeferenced so chainage becomes a "
+    "position on a drawing, and (3) the detection is traced as a linear feature rather than "
+    "reported as a point anomaly. Until all three hold, no PAS 128 level would be supportable."
+)
 
 
 @dataclass(frozen=True)
 class QualityAssessment:
-    """One finding's survey quality level, with the reason it landed there.
+    """What grade a finding supports, why, and what it would take to support more.
 
-    `post_processed` maps to PAS 128's `P` suffix. `label` is what goes on a drawing.
+    `post_processed` maps to PAS 128's `P` suffix and is derived from the processing chain that
+    was actually applied, not assumed. It is recorded even while `level` is `"ungraded"`, so
+    that if a grade later becomes supportable the suffix is already known rather than re-guessed.
+
+    It is **tri-state on purpose**: `None` means the processing provenance was never recorded,
+    which is not the same claim as `False` ("recorded, and the data was raw"). Collapsing the two
+    would assert raw data about a pick nobody captured a chain for — the same fabrication this
+    project refuses for depth and position. `label` renders no `P` for either, but only because
+    an unknown provenance cannot earn a suffix, not because the two are equivalent.
+
+    `provisional_ceiling` is a conditional note and never a grade. It exists so that "ungraded"
+    reads as a specific, closeable gap rather than a refusal.
     """
 
     level: QualityLevel
     rationale: str
-    post_processed: bool = False
+    post_processed: bool | None = None
+    provisional_ceiling: str | None = None
 
     @property
     def label(self) -> str:
-        """The level as it is written on a deliverable, e.g. "QL-B2P"."""
-        if self.post_processed and self.level.startswith("QL-B"):
+        """The level as it is written on a deliverable, e.g. "QL-B2P".
+
+        Only a recorded `True` earns the suffix. `None` (never recorded) must not, because the
+        suffix is a positive claim about the data, and we would be making it without evidence.
+        """
+        if self.post_processed is True and self.level.startswith("QL-B"):
             return f"{self.level}P"
         return self.level
 
     @property
     def is_detection_grade(self) -> bool:
-        """True for the QL-B band — geophysically detected, not verified and not records-only."""
+        """True for the QL-B band — geophysically detected, not verified and not records-only.
+
+        False for `"ungraded"`: withholding a grade is not a detection grade.
+        """
         return self.level.startswith("QL-B")
+
+
+def _evidence_summary(evidence: Evidence, corroborating_channels: int) -> str:
+    """What this finding does have, stated plainly, for the ungraded rationale.
+
+    Withholding the grade must not withhold the measurements — a reader still needs to know
+    whether the depth was measured or assumed, and how many channels agreed.
+    """
+    if evidence.position_confidence == "unavailable":
+        return "no along-line position could be derived, so this cannot be placed even on its own line"
+
+    if evidence.depth_confidence == "calibrated":
+        depth = "depth measured from this target's own hyperbola"
+    elif evidence.depth_confidence == "estimated":
+        depth = "depth derived from an assumed velocity, not a measured one"
+    else:
+        depth = "no depth could be derived"
+
+    if corroborating_channels >= 2:
+        agreement = f", consistent across {corroborating_channels} frequency channels"
+    else:
+        agreement = ", seen on a single frequency channel"
+
+    return f"{depth}{agreement}"
 
 
 def quality_level(
     evidence: Evidence,
     *,
     corroborating_channels: int = 1,
-    post_processed: bool = False,
+    post_processed: bool | None = None,
     verified_by_excavation: bool = False,
 ) -> QualityAssessment:
-    """Grade one piece of evidence against the PAS 128 / ASCE 38 ladder.
+    """Grade one piece of evidence — which, absent an excavation, means declining to grade it.
 
     Args:
-        evidence: the finding's evidence, whose confidence labels drive the grade.
-        corroborating_channels: how many *distinct* receivers saw this target and agreed —
-            `studio/corroborate.py` computes it. 1 means a single channel, which is the normal
-            case and caps the grade below QL-B1.
+        evidence: the finding's evidence. Its confidence labels shape the rationale, but they
+            cannot earn a PAS level; see the module docstring for why.
+        corroborating_channels: how many *distinct frequency channels* saw this target and
+            agreed — `studio/corroborate.py` computes it. Reported in the rationale as evidence,
+            but it does not move the grade: more channels is still one technique.
         post_processed: whether the data behind this was post-processed (PAS 128's `P` suffix).
+            Derive it from the chain actually applied — `studio.processing.is_post_processed` —
+            rather than passing a literal. Pass `None`, the default, when no chain was recorded:
+            that is a different claim from `False` and is carried through as one.
         verified_by_excavation: set only when someone physically exposed the utility. Never
             inferred from any measurement.
 
     Returns:
-        The level, and the specific reason for it.
+        `"ungraded"` with its reason and a provisional ceiling, or `"QL-A"` for a recorded
+        excavation. Never `"QL-B1"` or `"QL-B2"`.
     """
     if corroborating_channels < 1:
         raise ValueError(f"corroborating_channels must be at least 1, got {corroborating_channels}")
@@ -105,55 +186,38 @@ def quality_level(
     if verified_by_excavation:
         return QualityAssessment("QL-A", _RATIONALE_VERIFIED, post_processed)
 
-    has_position = evidence.position_confidence != "unavailable"
-    has_depth = evidence.depth_confidence != "unavailable"
-    depth_measured = evidence.depth_confidence == "calibrated"
-    position_measured = evidence.position_confidence == "calibrated"
-
-    # Nothing located at all. Not a detection in any reportable sense.
-    if not has_position:
-        return QualityAssessment(
-            "QL-D",
-            "no position could be derived, so this cannot be placed on a drawing — "
-            "reportable only as an indication that something was detected",
-            post_processed,
-        )
-
-    # Positioned but with no depth: PAS 128's QL-B3 is exactly "position known, depth not".
-    if not has_depth:
-        return QualityAssessment(
-            "QL-B3",
-            "horizontal position available but no depth could be derived — "
-            "plan position only, no vertical information",
-            post_processed,
-        )
-
-    # The top detection grade: depth actually measured, and an independent channel agrees.
-    if depth_measured and position_measured and corroborating_channels >= 2:
-        return QualityAssessment(
-            "QL-B1",
-            f"depth measured from the target's own hyperbola and corroborated across "
-            f"{corroborating_channels} independent channels, with encoder-measured position",
-            post_processed,
-        )
-
-    # Measured depth on one channel only. Good, but uncorroborated.
-    if depth_measured:
-        return QualityAssessment(
-            "QL-B2",
-            "depth measured from the target's own hyperbola on a single channel — "
-            "good confidence in position and depth, but not independently corroborated",
-            post_processed,
-        )
-
-    # Depth exists but rests on an assumed velocity. This is the common case, and it must not
-    # dress itself up: an assumed permittivity is not a measurement.
+    summary = _evidence_summary(evidence, corroborating_channels)
     return QualityAssessment(
-        "QL-B4",
-        "position available and a depth estimated from an assumed velocity, not a measured one — "
-        "the lowest geophysical detection grade, and the honest one for header-derived depth",
+        "ungraded",
+        f"{summary} — {_WHY_UNGRADED}",
         post_processed,
+        provisional_ceiling=_CEILING,
     )
+
+
+def quality_from_external(
+    level: QualityLevel,
+    basis: str,
+    *,
+    post_processed: bool | None = None,
+) -> QualityAssessment:
+    """A grade asserted from outside this system — a second technique, another surveyor's work.
+
+    This is the only route to QL-B1 or QL-B2, and it is deliberately a human assertion with a
+    stated basis rather than anything inferred. Same shape as `verified_by_excavation`: the
+    system records what a person determined out of band, and never derives it.
+
+    Args:
+        level: any level on `QUALITY_LADDER`. `"ungraded"` is not a grade and is refused.
+        basis: what supports it — the techniques used, who surveyed it. Required; an
+            externally-asserted grade with no stated basis is exactly the unsourced number this
+            project refuses everywhere else.
+    """
+    if level not in QUALITY_LADDER:
+        raise ValueError(f"{level!r} is not a PAS 128 level — expected one of {list(QUALITY_LADDER)}")
+    if not basis.strip():
+        raise ValueError("an externally supplied grade needs a stated basis, not an empty string")
+    return QualityAssessment(level, f"externally graded: {basis.strip()}", post_processed)
 
 
 def quality_from_records_only() -> QualityAssessment:

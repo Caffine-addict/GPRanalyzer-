@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,7 @@ from studio.processing import (
     bandpass,
     chain_from_params,
     dewow,
+    is_post_processed,
     migrate,
     remove_background,
     run_chain,
@@ -268,3 +271,42 @@ def test_chain_from_params_reads_string_switches_correctly() -> None:
 def test_chain_from_params_rejects_an_ambiguous_switch_value() -> None:
     with pytest.raises(ValueError, match="expected true or false"):
         chain_from_params({"dewow": "yes"})
+
+
+# ------------------------------------------------- is_post_processed: PAS 128's "P" suffix
+
+
+def test_an_untouched_chain_is_not_post_processed() -> None:
+    # The default chain does nothing to the samples, so calling its output "post-processed"
+    # would be a false claim on a deliverable.
+    assert is_post_processed(ProcessingChain()) is False
+
+
+def test_an_explicitly_all_off_chain_is_not_post_processed() -> None:
+    chain = ProcessingChain(
+        time_zero_sample=0, dewow=False, background_removal="none",
+        bandpass=False, gain="none", stack_traces=1, migrate=False,
+    )
+    assert is_post_processed(chain) is False
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"background_removal": "mean"},
+        {"background_removal": "moving"},
+        {"gain": "agc"},
+        {"gain": "exponential"},
+        {"gain": "linear"},
+        {"dewow": True},
+        {"bandpass": True},
+        {"migrate": True},
+        {"stack_traces": 2},
+        {"time_zero_sample": 5},
+    ],
+)
+def test_any_single_enabled_step_makes_it_post_processed(override: dict) -> None:
+    # Each is checked on its own: a chain is post-processed if *anything* altered the samples,
+    # so one enabled step must be enough regardless of which one it is.
+    chain = replace(ProcessingChain(), **override)
+    assert is_post_processed(chain) is True, f"{override} should count as processing"

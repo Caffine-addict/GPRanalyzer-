@@ -52,12 +52,13 @@ def build_evidence_block(evidence: Evidence) -> str:
     # Spelled out rather than given as a bare number, because "1" and "2" carry completely
     # different weight and the model has no way to know that from the digit alone.
     lines.append(
-        f"- independent receivers that recorded this target: {evidence.corroborating_channels}"
+        f"- frequency channels that recorded this target: {evidence.corroborating_channels}"
         + (
-            " (separate receivers with different time axes, fitted independently, agreeing on"
-            " position and depth — the strongest evidence available here)"
+            " (multiple frequency bands from the same antenna pass, fitted independently,"
+            " agreeing on position and depth — meaningful confirmation, though these channels"
+            " share one antenna position and pass, not separately-positioned receivers)"
             if evidence.corroborating_channels >= 2
-            else " (only one — nothing has independently confirmed this target)"
+            else " (only one — nothing has confirmed this target on another frequency band)"
         )
     )
     return "\n".join(lines)

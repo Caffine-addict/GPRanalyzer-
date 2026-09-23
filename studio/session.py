@@ -41,7 +41,7 @@ from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 
 DEFAULT_DATASET_DIR = Path("Dataset/DSU_GPR_Files")
 
-# The three receiver channels an SPRScan 3D writes per line, shallow to deep.
+# The three frequency channels an SPRScan 3D writes per line (RAD/RA1/RA2, one antenna), shallow to deep.
 # Ordering is the sampling interval, which is the physical difference between
 # them: a longer interval buys a deeper time window at coarser resolution.
 CHANNEL_ORDER: tuple[tuple[str, str], ...] = (

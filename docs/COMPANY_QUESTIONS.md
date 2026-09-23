@@ -10,6 +10,8 @@ Tracks what we're still waiting on. Update status inline as answers arrive.
 | 4 | What OS/hardware will this run on in the field? | Code must stay cross-platform; currently unconfirmed (Windows vs. Mac). | OPEN |
 | 5 | Confirm: is the ~64KB leading block in every file just a fixed firmware seek-table template (see Resolved below), or does it ever carry real per-survey data on other units/firmware versions? | Low priority — not blocking, just closing the loop if a spec ever surfaces. | OPEN (low priority) |
 | 6 | The two deliverable sheets now in `reference/hyperbolas/sheets/`: which CAD call-out (depth `D-x.xx` and utility type) belongs to each numbered GPR crop ①–⑧? | Turns 16 confirmed-but-unlabelled crops into 16 labelled examples with a class and a surveyed depth — the first ground truth in the repo, and a direct check on the depth axis. | OPEN |
+| 7 | Is trace capture **wheel-encoder-triggered** (one trace per `SPR_SHAFT_INTERVAL` = 0.025 m of travel) or **time-triggered** (`SPR_TIMER_FREQUENCY` = 10, i.e. 10 traces/second)? Both fields are present in every header and they imply different things. | Decides the live-processing budget. Encoder-triggered means trace rate scales with walking speed (~56 traces/s/channel at 1.4 m/s); time-triggered means a fixed 10/s regardless of speed — a 5.6× difference in the per-second workload the incremental pipeline must sustain. | OPEN |
+| 8 | What is the typical survey walking speed on this corridor — and is there a maximum the operator is told to stay under? | The live-mapping latency budget is currently built on an *assumed* 1.4 m/s (standard pedestrian pace), not a measured one. The delivered files carry only a survey start time, no per-trace timestamps, so the real speed cannot be derived from the data. This number sets the whole real-time target. | OPEN |
 
 ## Independent cross-check on #2 (2026-09-09)
 
@@ -42,5 +44,13 @@ One strong fit, not a survey — but it is the same answer from a fit an
 operator can repeat by hand on any target.
 
 ## Resolved
-- Hardware vendor confirmed: Subsurface Imaging Systems SPRScan 3D (not US Radar — the earlier Radar Studio/SEG-Y lead is moot).
+- Hardware: the **data-acquisition unit** is a Subsurface Imaging Systems SPRScan 3D — `INSTRUMENT`
+  and `RECEIVER_SPECS` say so in all 12 channel headers. **Revised 2026-09-23**: the earlier
+  "not US Radar, that lead is moot" note was too strong. Every header also carries
+  `ANTENNA_TYPE_DETECTED = eQUANTUM`, and "eQuantum" is a US Radar antenna product name. The
+  reading that fits both fields is an SIS acquisition unit paired with a US-Radar-made eQuantum
+  antenna head — a modular DAU/antenna split, not one vendor claim being wrong. Not confirmed by
+  the vendor; see `docs/pilot/CHANNEL_IDENTITY.md` for the full header evidence.
+- **RAD/RA1/RA2 are three frequency channels from one antenna head at one position**, not three
+  spatially separate receivers (2026-09-23, from the headers — see `docs/pilot/CHANNEL_IDENTITY.md`).
 - The ~64KB leading block: mostly-zero buffer containing a sparse 113-entry table of uint16 values incrementing by exactly 576 (the trace record size), wrapping at 16 bits (113 × 576 ≈ 65536). Identical structure/size across all 4 jobs regardless of survey length — this is a fixed firmware artifact (likely an internal seek/ring-buffer template baked in by the acquisition software), not per-survey data. Safe to ignore; parser already locates real trace records independently of this block.

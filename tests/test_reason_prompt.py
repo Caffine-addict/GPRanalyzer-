@@ -196,19 +196,19 @@ def test_evidence_with_unavailable_confidence_and_stray_value_cannot_reach_promp
 # --- corroboration reaches the model, and the third prompt (2026-09-14) ------
 
 
-def test_a_single_receiver_is_described_as_unconfirmed() -> None:
+def test_a_single_channel_is_described_as_unconfirmed() -> None:
     # "1" alone tells the model nothing. The first real run produced "the lack of prior survey
-    # passes means this is the first observation" about a target two receivers had just agreed on,
+    # passes means this is the first observation" about a target two channels had just agreed on,
     # because the count never reached the prompt at all.
     block = build_evidence_block(_evidence())  # default is 1
-    line = next(line for line in block.splitlines() if "independent receivers" in line)
+    line = next(line for line in block.splitlines() if "frequency channels" in line)
     assert "1" in line
     assert "only one" in line
 
 
-def test_two_receivers_are_described_as_the_strongest_evidence_available() -> None:
+def test_two_channels_are_described_as_meaningful_confirmation() -> None:
     block = build_evidence_block(_evidence(corroborating_channels=2))
-    line = next(line for line in block.splitlines() if "independent receivers" in line)
+    line = next(line for line in block.splitlines() if "frequency channels" in line)
     assert "2" in line
     assert "independently" in line
     assert "only one" not in line

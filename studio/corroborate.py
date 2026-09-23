@@ -1,10 +1,16 @@
-"""Does the same buried object appear on more than one channel — and where does it run?
+"""Does the same buried object appear on more than one frequency channel — and where does it run?
 
-The SPRScan 3D records three channels at once (RAD/RA1/RA2) from different receivers at
-different sampling intervals. A reflector seen independently on two of them, agreeing in
-position *and* in depth, is far stronger evidence than one strong fit on one channel: the
-receivers, the time axes and the fits are all independent, so agreement is not a shared
-artefact. This module is that test, and the geometry that follows from it.
+The SPRScan 3D records three channels at once (RAD/RA1/RA2) — three frequency bands from one
+eQuantum antenna head at one position, on one pass, not three separately-positioned receivers
+(headers confirmed 2026-09-23: identical RADAR_HEAD_MARK and ANTENNA_TYPE_DETECTED across all
+three, no receiver-offset field anywhere — see `docs/pilot/CHANNEL_IDENTITY.md`). A reflector
+seen independently on two of them, agreeing in position *and* in depth, is still stronger evidence
+than one strong fit on one channel: each channel's sampling interval, time axis and fit are
+independent, so agreement is not one channel's own processing artefact repeating itself. It is
+not, however, independent-geometry corroboration — all three channels share one antenna position,
+wheel encoder and pass, so a systematic error common to the whole pass could show up on every
+channel at once, the way it could not for genuinely separate receivers. This module is that
+(same-position, multi-frequency) test, and the geometry that follows from it.
 
 Two things are computed, in the order the literature does them:
 
@@ -52,7 +58,7 @@ DEFAULT_DEPTH_EPS_M = 0.35
 # line exactly as the literature says it would.
 RUN_RESIDUAL_TOL_M = DEFAULT_DEPTH_EPS_M / 3
 
-# If two receivers really saw the same object, the wave crossed the same ground to reach it, so the
+# If two frequency channels really saw the same object, the wave crossed the same ground to reach it, so the
 # permittivity each fit implies must agree. Position and depth agreeing while permittivity does not
 # is a coincidence, not a corroboration — on the four real lines this single check removed 8 of 14
 # "corroborated" targets, including pairs whose implied permittivities differed by a factor of 20.
@@ -94,7 +100,7 @@ class Corroboration:
 
     @property
     def permittivity_ratio(self) -> float | None:
-        """How far apart the *receivers* are on permittivity, as a factor. None if unknown.
+        """How far apart the *channels* are on permittivity, as a factor. None if unknown.
 
         Computed from `dielectric_range`, which holds one value per channel — each channel's
         best-constrained fit — not the extremes across every member. Taking min/max over all
@@ -121,12 +127,15 @@ class Corroboration:
 
     @property
     def corroborated(self) -> bool:
-        """Two distinct channels saw it *and* they agree about the ground.
+        """Two distinct frequency channels saw it *and* they agree about the ground.
 
-        Two fits on the same channel are not corroboration: they share a receiver, a time axis and
-        whatever systematic error that channel carries. And two channels that disagree about
-        permittivity did not measure the same ground, so their agreement on position and depth is
-        coincidence — that second half was missing until the first real run exposed it.
+        Two fits on the same channel are not corroboration: they share a time axis and whatever
+        systematic error that channel's own processing carries. And two channels that disagree
+        about permittivity did not measure the same ground, so their agreement on position and
+        depth is coincidence — that second half was missing until the first real run exposed it.
+        (Even agreeing channels share one antenna position and pass — see the module docstring —
+        so this is same-position, multi-frequency confirmation, not independently-positioned
+        corroboration.)
         """
         return self.n_channels >= 2 and self.permittivity_agrees
 

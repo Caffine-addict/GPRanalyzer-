@@ -39,7 +39,18 @@ _TAG_OFFSET_IN_RECORD = 32  # offset of the tag's own first byte (0x0d) within a
 _RECORD_HEADER_LEN = 64
 _SAMPLE_DTYPE = np.dtype("<i2")
 
-_HEADER_FIELD_RE = re.compile(r"([A-Z][A-Z0-9_]*)\s+(.*)")
+# Field names are at least 4 characters. The header is located by *scanning* a window rather
+# than by a documented offset, so whatever this pattern admits becomes a "field" — and binary
+# that happens to begin with a capital letter satisfied the looser `[A-Z][A-Z0-9_]*`. Across the
+# 12 delivered channel files that produced 52 distinct keys where only 33 are real: the extras
+# were one- to three-letter names (`C`, `Z`, `NR`, `YPI`) whose values were control bytes.
+# Every genuine field in the format is 4+ characters, so the length floor separates them
+# cleanly. See tests/test_parsers_spr.py, which pins the real 33 against the real files.
+_HEADER_FIELD_RE = re.compile(r"([A-Z][A-Z0-9_]{3,})\s+(.*)")
+
+# The second, independent guard: a real value is printable text. Misread binary is not. Keeping
+# both means a 4+ character phantom key still cannot get in on name length alone.
+_CONTROL_CHARS = frozenset(chr(c) for c in range(0x20)) | {chr(0x7F)}
 _HEADER_ANCHOR = b"ACQUISITION_DATE"
 _HEADER_WINDOW = 2048
 
@@ -67,8 +78,14 @@ def _parse_text_header(data: bytes) -> dict[str, str]:
     header: dict[str, str] = {}
     for fragment in window.split(b"\x00"):
         match = _HEADER_FIELD_RE.search(fragment.decode("ascii", errors="ignore"))
-        if match:
-            header[match.group(1)] = match.group(2).strip()
+        if match is None:
+            continue
+        value = match.group(2)
+        # An empty value is real and meaningful (an operator who wrote no NOTE); a value
+        # carrying control bytes is misread binary. Only the second is rejected.
+        if _CONTROL_CHARS.intersection(value):
+            continue
+        header[match.group(1)] = value.strip()
     return header
 
 

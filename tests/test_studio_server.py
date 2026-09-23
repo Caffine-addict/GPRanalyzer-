@@ -220,7 +220,7 @@ def test_csv_export_carries_chainage_class_and_grade_but_no_coordinate(
     assert header == [
         "id", "channel", "trace", "sample", "chainage_m", "depth_m", "depth_confidence",
         "taxonomy_class", "class_rule", "corroborating_channels",
-        "risk_level", "risk_score", "quality_level", "quality_rationale",
+        "risk_level", "risk_score", "quality_level", "quality_rationale", "quality_ceiling",
         "velocity_m_per_ns", "velocity_source", "dielectric", "fit_r2",
         "label", "note", "created_at",
     ]
@@ -238,7 +238,11 @@ def test_csv_export_carries_chainage_class_and_grade_but_no_coordinate(
         "strong_high_contrast_reflector", "multiple_point_reflectors", "low_snr_point_reflector",
         "cluttered_multi_target", "disturbed_zone", "clear_point_reflector",
     }
-    assert row["quality_level"]  # a real PAS 128 label, not empty
+    # "ungraded" is the honest answer today, and the export must carry the reason with it
+    # rather than leaving a blank cell that reads as an oversight.
+    assert row["quality_level"] == "ungraded"
+    assert row["quality_rationale"]
+    assert "QL-B2P" in row["quality_ceiling"]
     assert int(row["corroborating_channels"]) >= 1
 
 
@@ -473,24 +477,80 @@ def test_a_model_failure_is_not_cached_so_the_next_click_retries(
         studio_app.state.interpretation_cache = {}
 
 
-def test_interpretation_carries_a_survey_quality_level(
+def test_interpretation_reports_ungraded_with_its_reason(
     client: TestClient, job: str, fake_engine
 ) -> None:
-    # A fitted velocity on one channel is QL-B2: depth measured, not corroborated.
+    # Even the strongest evidence this system can produce — a velocity fitted from the target's
+    # own hyperbola — earns no PAS 128 level, because no accuracy has been validated against
+    # ground truth and there is no georeferenced position. See evidence/quality.py.
     pick = _make_pick(client, job, velocity_source="fitted", fit_r2=0.98)
     body = client.post(f"/api/jobs/{job}/picks/{pick['id']}/interpret").json()
 
-    assert body["quality_level"] == "QL-B2"
+    assert body["quality_level"] == "ungraded"
     assert body["corroborating_channels"] == 1
-    assert "not independently corroborated" in body["quality_rationale"]
+    assert "own hyperbola" in body["quality_rationale"]
+    assert "no ground-truth accuracy validation" in body["quality_rationale"]
 
 
-def test_an_assumed_velocity_grades_lower_than_a_fitted_one(
+def test_interpretation_carries_the_provisional_ceiling(
     client: TestClient, job: str, fake_engine
 ) -> None:
-    # The header's permittivity is an assumption, and an assumption caps the grade at QL-B4.
+    # "ungraded" has to read as a closeable gap, not a refusal: the response must say what
+    # would have to change before any level became supportable.
+    pick = _make_pick(client, job, velocity_source="fitted", fit_r2=0.98)
+    body = client.post(f"/api/jobs/{job}/picks/{pick['id']}/interpret").json()
+
+    assert body["quality_ceiling"] is not None
+    assert "QL-B2P" in body["quality_ceiling"]
+    assert "ground truth" in body["quality_ceiling"]
+    # And the conditional must never be mistaken for the grade itself.
+    assert body["quality_level"] == "ungraded"
+
+
+def test_an_assumed_velocity_is_ungraded_and_says_the_velocity_was_assumed(
+    client: TestClient, job: str, fake_engine
+) -> None:
+    # Withholding the grade must not withhold the measurement's provenance.
     pick = _make_pick(client, job, velocity_source="assumed", fit_r2=None)
     body = client.post(f"/api/jobs/{job}/picks/{pick['id']}/interpret").json()
 
-    assert body["quality_level"] == "QL-B4"
+    assert body["quality_level"] == "ungraded"
     assert "assumed velocity" in body["quality_rationale"]
+
+
+# --------------------------------------- create_pick records the display chain it was picked on
+
+
+def test_a_pick_records_that_its_display_chain_was_processed(client: TestClient, job: str) -> None:
+    # The "P" suffix is a claim about the data the operator was looking at, so the client sends
+    # the chain and the server derives it. Nothing in this path was exercised before.
+    pick = _make_pick(client, job, processing={"dewow": True})
+    assert pick["post_processed"] is True
+
+
+def test_a_pick_records_an_untouched_chain_as_false(client: TestClient, job: str) -> None:
+    # An explicitly all-off chain is a real, positive statement: the data was raw.
+    pick = _make_pick(client, job, processing={"dewow": False, "background_removal": "none"})
+    assert pick["post_processed"] is False
+
+
+def test_a_pick_with_no_chain_reported_records_none_not_false(client: TestClient, job: str) -> None:
+    # A client that says nothing about processing must not be read as saying "raw".
+    pick = _make_pick(client, job)
+    assert pick["post_processed"] is None
+
+
+def test_an_unknown_processing_key_on_a_pick_is_refused(client: TestClient, job: str) -> None:
+    # Same rule the render path already holds: a misspelled parameter must not be silently
+    # ignored, or the recorded provenance describes a chain nobody ran.
+    channel = client.get(f"/api/jobs/{job}").json()["channels"][0]["extension"]
+    response = client.post(
+        f"/api/jobs/{job}/picks",
+        json={
+            "channel": channel, "trace": 150.0, "sample": 90.0, "time_ns": 9.0, "depth_m": 0.45,
+            "velocity_m_per_ns": 0.1011, "velocity_source": "fitted", "dielectric": 8.79,
+            "fit_r2": 0.98, "processing": {"dewwow": True},
+        },
+    )
+    assert response.status_code == 422
+    assert "dewwow" in response.json()["detail"]

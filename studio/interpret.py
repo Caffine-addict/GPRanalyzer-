@@ -164,10 +164,10 @@ def risk_for_line(items: Sequence[PickEvidence], config: RiskConfig) -> RiskAsse
 
 
 def corroborating_channels(picks: Sequence[Pick], target_id: str, trace_spacing_m: float) -> int:
-    """How many distinct channels independently saw this pick's target.
+    """How many distinct frequency channels independently saw this pick's target.
 
     Built from every pick on the job, not just the one channel being interpreted —
-    corroboration across receivers is the entire point, so it cannot be computed from one
+    corroboration across channels is the entire point, so it cannot be computed from one
     channel's picks. A pick that clusters with nothing returns 1: itself, seen once.
 
     `trace_spacing_m` comes from the channel header (`SPR_SHAFT_INTERVAL`) rather than a
@@ -189,7 +189,7 @@ def corroborating_channels(picks: Sequence[Pick], target_id: str, trace_spacing_
 _EXPORT_HEADER = [
     "id", "channel", "trace", "sample", "chainage_m", "depth_m", "depth_confidence",
     "taxonomy_class", "class_rule", "corroborating_channels",
-    "risk_level", "risk_score", "quality_level", "quality_rationale",
+    "risk_level", "risk_score", "quality_level", "quality_rationale", "quality_ceiling",
     "velocity_m_per_ns", "velocity_source", "dielectric", "fit_r2",
     "label", "note", "created_at",
 ]
@@ -239,8 +239,13 @@ def export_target_list(job_name: str, job_dir: Path, config: Config) -> list[lis
                 continue
             channels = corroborating_channels(picks, pick.id, info.trace_spacing_m)
             evidence = replace(item.evidence, corroborating_channels=channels)
-            # post_processed=False: this export runs on raw traces, same as /interpret.
-            grade = quality_level(evidence, corroborating_channels=channels, post_processed=False)
+            # Same rule as /interpret: the "P" suffix comes from the pick's own recorded
+            # display chain, not from an assumption about this export.
+            grade = quality_level(
+                evidence,
+                corroborating_channels=channels,
+                post_processed=pick.post_processed,
+            )
             rows_by_id[pick.id] = [
                 pick.id,
                 pick.channel,
@@ -256,6 +261,7 @@ def export_target_list(job_name: str, job_dir: Path, config: Config) -> list[lis
                 f"{risk.score:.3f}",
                 grade.label,
                 grade.rationale,
+                grade.provisional_ceiling or "",
                 f"{pick.velocity_m_per_ns:.5f}",
                 pick.velocity_source,
                 f"{pick.dielectric:.2f}",

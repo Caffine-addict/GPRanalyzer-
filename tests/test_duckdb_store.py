@@ -419,9 +419,9 @@ def test_failing_migration_rolls_back_atomically(tmp_path: Path, monkeypatch: py
 
 
 def test_corroborating_channels_survives_a_round_trip(store: DuckDBStore) -> None:
-    # Without persisting this, a finding read back loses the strongest evidence it had and
-    # evidence/quality.py silently regrades it from QL-B1 to QL-B2 — a downgrade caused purely by
-    # a trip through storage.
+    # Without persisting this, a finding read back loses the strongest evidence it had: the
+    # count no longer reaches evidence/quality.py's rationale or the reasoning prompt, so a
+    # corroborated target silently reads as a single-channel one after a trip through storage.
     frame_id = store.save_frame("s1", "line_1", _frame())
     finding = _finding(evidence=_evidence(corroborating_channels=3))
     store.save_finding("s1", "line_1", frame_id, finding)

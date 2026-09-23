@@ -40,7 +40,7 @@ from studio import candidates as candidate_store
 from studio import interpret, render, session, velocity
 from studio import palette as palette_module
 from studio import picks as pick_store
-from studio.processing import chain_from_params, run_chain
+from studio.processing import chain_from_params, is_post_processed, run_chain
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -294,6 +294,14 @@ def create_pick(
             label=payload.get("label", ""),
             note=payload.get("note", ""),
             fit_r2=None if payload.get("fit_r2") is None else float(payload["fit_r2"]),
+            # The display chain the operator was looking at when they placed this target.
+            # Absent means the client didn't say, which is recorded as None ("not known"),
+            # never as False — see Pick.post_processed.
+            post_processed=(
+                None
+                if payload.get("processing") is None
+                else is_post_processed(chain_from_params(payload["processing"]))
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid pick: {exc}") from exc
@@ -445,8 +453,8 @@ def interpret_target(request: Request, job_name: str, pick_id: str) -> dict:
     if cached is not None:
         return {**cached, "cached": True}
 
-    # Count first, then reason: the model has to be told how many independent receivers saw this
-    # target, or it writes "nothing has confirmed this" about a target two receivers just agreed
+    # Count first, then reason: the model has to be told how many frequency channels saw this
+    # target, or it writes "nothing has confirmed this" about a target two channels just agreed
     # on. The evidence the model sees and the evidence the grade is computed from are then the
     # same object, which is the point.
     channels = interpret.corroborating_channels(picks, pick_id, info.trace_spacing_m)
@@ -455,9 +463,16 @@ def interpret_target(request: Request, job_name: str, pick_id: str) -> dict:
     engine = _reasoning_engine(request, config)
     result, latency_ms = engine.reason(evidence, risk)
 
-    # post_processed=False: the interpretation runs on raw traces by design, so PAS 128's "P"
-    # suffix would be a false claim here.
-    grade = quality_level(evidence, corroborating_channels=channels, post_processed=False)
+    # The "P" suffix describes the data the target was picked from, not the arithmetic done
+    # afterwards, so it comes from the pick's own recorded display chain — passed straight
+    # through, including `None` for a pick that never recorded one. `None` is not `False`:
+    # "nobody captured the chain" is a different claim from "the chain was raw", and
+    # quality_level carries the distinction rather than coercing it away here.
+    grade = quality_level(
+        evidence,
+        corroborating_channels=channels,
+        post_processed=pick.post_processed,
+    )
     response = {
         "pick_id": pick_id,
         "class": item.taxonomy_class,
@@ -476,11 +491,13 @@ def interpret_target(request: Request, job_name: str, pick_id: str) -> dict:
         "reasoning_error": None
         if result is not None
         else "the reasoning model returned nothing usable — the measurements above still stand",
-        # What this finding may be reported as on a deliverable. QL-A is unreachable from radar
-        # alone and QL-B1 needs a fitted velocity corroborated across channels — see
-        # evidence/quality.py.
+        # What this finding may be reported as on a deliverable — today, nothing: no PAS 128
+        # level is supportable without ground-truth accuracy and a georeferenced position, so
+        # this reads "ungraded" and `quality_ceiling` says what would have to change. See
+        # evidence/quality.py for why B1 and B2 are unreachable rather than merely unmet.
         "quality_level": grade.label,
         "quality_rationale": grade.rationale,
+        "quality_ceiling": grade.provisional_ceiling,
         "corroborating_channels": channels,
         "cached": False,
     }

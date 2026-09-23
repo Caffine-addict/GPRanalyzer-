@@ -100,13 +100,16 @@ class Evidence:
     neighbours: tuple[str, ...] = ()
     prior_passes: tuple[Any, ...] = ()
 
-    # How many *independent* receivers recorded this target and agreed it is there. 1 means one
+    # How many *distinct frequency channels* (RAD/RA1/RA2 — one antenna, three simultaneous
+    # frequency bands from one position, not separately-positioned receivers; see
+    # docs/pilot/CHANNEL_IDENTITY.md) recorded this target and agreed it is there. 1 means one
     # channel saw it, which is the ordinary case and is not corroboration. This exists because the
-    # strongest evidence this project can produce — the same reflector on two receivers with
-    # different time axes, fitted separately, agreeing on position and depth — was being computed
-    # and then hidden from every consumer that matters. `evidence/quality.py` needs it to reach
-    # QL-B1, and the reasoning prompt needs it or the model writes "no prior passes, so this is the
-    # first observation" about a target two receivers just confirmed.
+    # strongest evidence this project can produce — the same reflector on two frequency channels
+    # with different time axes, fitted separately, agreeing on position and depth — was being
+    # computed and then hidden from every consumer that matters. `evidence/quality.py` reports it
+    # in the rationale (it does not move the grade — more frequency channels is still one
+    # geophysical technique), and the reasoning prompt needs it or the model writes "no prior
+    # passes, so this is the first observation" about a target two channels just confirmed.
     corroborating_channels: int = 1
 
     def __post_init__(self) -> None:

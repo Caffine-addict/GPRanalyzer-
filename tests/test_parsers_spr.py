@@ -18,6 +18,7 @@ import pytest
 
 import parsers.spr  # noqa: F401 - registers the "rad"/"ra1"/"ra2" parsers as a side effect
 from parsers.base import get_parser, registered_extensions
+from parsers.spr import _parse_text_header
 
 # Real 64-byte record header template, byte-for-byte from a real Job_0703
 # capture: 32 bytes of fixed fields (offset 2-3 = 0x0040 = header length),
@@ -241,3 +242,74 @@ def test_parse_spr_rejects_non_uniform_record_spacing(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not uniformly spaced"):
         get_parser(path)(path)
+
+
+# ------------------------------------------- header field acceptance (tightened 2026-09-23)
+
+_DATASET = Path("Dataset/DSU_GPR_Files")
+
+def test_only_real_vendor_fields_survive_the_header_scan() -> None:
+    """The header block is found by scanning, so the scan must reject what it mis-reads.
+
+    `_parse_text_header` walks a 2 KB window split on NUL bytes and keeps anything that looks
+    like `KEY VALUE`. Binary that happens to start with a capital letter satisfied that, so the
+    scan was inventing fields: across the 12 delivered channel files it produced 52 distinct
+    keys, of which only 33 are real. The extras were single letters (`C`, `E`, `Z`, `NR`, `YPI`)
+    carrying control bytes as their "value".
+
+    This pins the real set. A field that genuinely exists in the format and is being dropped
+    will fail here loudly, which is the right direction to fail: a missing real field is a bug
+    worth seeing, an invented one is a bug that hides.
+    """
+    jobs = sorted(p for p in _DATASET.iterdir() if p.is_dir())
+    assert jobs, "no delivered jobs found — this test needs the real dataset"
+
+    per_file: dict[str, set[str]] = {}
+    for job in jobs:
+        for ext in ("RAD", "RA1", "RA2"):
+            path = job / f"Single-01.{ext}"
+            if path.exists():
+                per_file[f"{job.name}/{ext}"] = set(_parse_text_header(path.read_bytes()))
+
+    union = set().union(*per_file.values())
+    common = set.intersection(*per_file.values())
+
+    # Every file now yields exactly the same field set — no file-specific phantom keys.
+    assert union == common, f"fields present in some files but not others: {sorted(union - common)}"
+    assert len(union) == 33, f"expected 33 real header fields, got {len(union)}: {sorted(union)}"
+
+    # Spot-check the fields this project's conclusions actually rest on.
+    for required in (
+        "ACQUISITION_DATE", "ANTENNA_TYPE", "ANTENNA_TYPE_DETECTED", "INSTRUMENT",
+        "RADAR_HEAD_MARK", "SPR_CHANNEL_NUM", "SPR_FILE_VERSION", "SPR_SAMPLING_INTERVAL",
+        "SPR_SHAFT_INTERVAL", "SPR_SAMPLES_PER_SCAN", "SPR_MEDIUM_DIELECTRIC",
+    ):
+        assert required in union, f"{required} went missing from the header scan"
+
+
+def test_a_short_key_is_not_accepted_as_a_field() -> None:
+    # Every real field name is four characters or more; every phantom one was three or fewer.
+    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00Z 5\x00NR 7\x00YPI 9\x00")
+    assert "ACQUISITION_DATE" in header
+    assert "Z" not in header
+    assert "NR" not in header
+    assert "YPI" not in header
+
+
+def test_a_value_carrying_control_bytes_is_not_accepted_as_a_field() -> None:
+    # The giveaway for misread binary: real values are printable text, phantom ones are not.
+    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00LONGKEY \x08\x07\x06junk\x00")
+    assert header["ACQUISITION_DATE"] == "12/24/22"
+    assert "LONGKEY" not in header
+
+    # DEL (0x7F) sits outside the 0x00-0x1F range and needs pinning separately — dropping it
+    # from the guard left the whole suite green, because no real file happens to contain one.
+    delimited = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00LONGKEY abc\x7Fdef\x00")
+    assert "LONGKEY" not in delimited
+
+
+def test_a_real_field_with_an_empty_value_is_still_kept() -> None:
+    # An empty NOTE is a real, meaningful state — the operator wrote nothing. Dropping it
+    # would be indistinguishable from the field not existing.
+    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00NOTE \x00")
+    assert header["NOTE"] == ""

@@ -27,7 +27,7 @@ Rules:
   surface clutter perfectly.
 - Nothing has been excavated or verified. This is a geophysical interpretation of one 2-D line, and
   it cannot identify a utility by type, material or ownership on its own.
-- More independent receivers agreeing is the strongest evidence available here. One receiver alone
+- More agreeing frequency channels (RAD/RA1/RA2) is meaningful confirmation, though they share one antenna position, not independent receiver geometry. One channel alone
   is not confirmation, however well the curve fitted.
 - A single 2-D line cannot tell a small stone from a small cable or pipe — both draw the same
   hyperbola. Say so when the evidence is a small point reflector, rather than committing to one.

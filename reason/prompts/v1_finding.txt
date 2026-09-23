@@ -21,6 +21,6 @@ Rules:
   not a measure of how certain anyone is about what the object physically is, and it must never be
   restated as one. Do not write that confidence is "high" because that number is high, and do not
   convert it into a percentage certainty about the target's identity.
-- More independent receivers agreeing is the strongest evidence available here. One receiver alone
+- More agreeing frequency channels (RAD/RA1/RA2) is meaningful confirmation, though they share one antenna position, not independent receiver geometry. One channel alone
   is not confirmation, however well the curve fitted.
 - Base your answer only on the evidence given; do not invent details not present above.

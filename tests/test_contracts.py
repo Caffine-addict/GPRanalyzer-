@@ -299,7 +299,7 @@ def test_source_capabilities_rejects_unrecognized_latency_class() -> None:
 
 
 def test_evidence_defaults_to_one_corroborating_channel() -> None:
-    # One receiver saw it. That is the ordinary case, and it is not corroboration — so the default
+    # One channel saw it. That is the ordinary case, and it is not corroboration — so the default
     # must be the weakest honest value, never an optimistic one.
     ev = Evidence(**_base_evidence_kwargs())
     assert ev.corroborating_channels == 1

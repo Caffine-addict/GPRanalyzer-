@@ -56,6 +56,13 @@ class Pick:
     fit_r2: float | None  # None unless velocity_source == "fitted"
     created_at: str
 
+    # Whether the display this target was picked on had any processing applied — PAS 128's "P"
+    # suffix, derived from the chain via studio.processing.is_post_processed rather than assumed.
+    # `None` means "not recorded", which is the honest state for every pick made before this
+    # field existed: absent is not the same as False, and treating it as False would assert raw
+    # data on picks whose provenance nobody captured. Defaulted so those older picks still load.
+    post_processed: bool | None = None
+
 
 def _picks_path(job_name: str) -> Path:
     return safe_job_dir(_ANNOTATIONS_ROOT, job_name) / "picks.json"
@@ -93,6 +100,7 @@ def add_pick(
     label: str = "",
     note: str = "",
     fit_r2: float | None = None,
+    post_processed: bool | None = None,
 ) -> Pick:
     """Record one target. Returns the stored pick, including its generated id."""
     if velocity_source not in _VELOCITY_SOURCES:
@@ -118,6 +126,7 @@ def add_pick(
         note=note,
         fit_r2=None if fit_r2 is None else float(fit_r2),
         created_at=datetime.now(UTC).isoformat(),
+        post_processed=post_processed,
     )
     with ANNOTATION_WRITE_LOCK:
         _save(job_name, [*load_picks(job_name), pick])
