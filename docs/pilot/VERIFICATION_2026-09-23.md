@@ -1071,3 +1071,298 @@ Using the stored 233-box set (the one every public number is based on):
 Against a 6.9 s walking-pace budget for a 9.6 m line at 1.4 m/s, that is **5.1× headroom, not
 the 7× previously reported**. The fit is 93% of the total. Both the earlier 931 ms and the 7×
 should be read as superseded by the 1.36 s and 5.1× here.
+
+---
+
+# Box-set regeneration (step 3) — 2026-09-23
+
+## Root cause, fixed
+
+`detect_and_store` only ever appended: it loaded the existing boxes, skipped any whose rounded
+(channel, x, y) already existed, and added the rest. It never pruned. So `annotations/*/boxes.json`
+became the **cumulative union of every detector version ever run** against these jobs.
+
+`core.boxes.replace_detector_boxes` now replaces a detector's own previous output instead, keyed
+on a stable detector **name** (not version, so changing the logic still replaces rather than
+accumulates). Each stored box records `detector`, `detector_version` (the repo commit) and
+`run_id`. Boxes from other detectors survive; human-drawn boxes are never touched; legacy
+`auto:` boxes with no detector recorded are purged, because an unattributed machine box cannot
+be told apart from this detector's own earlier output and keeping it rebuilds the union.
+
+The legacy union is archived per job as `annotations/<job>/boxes_union_legacy.json`
+(`annotations/` is gitignored, so it stays out of the repo, as proprietary survey data should).
+
+
+### Regeneration from a clean run of today's detector
+
+```console
+$ .venv/bin/python scripts/detect_candidates.py --all
+Job_0696: 43 candidate boxes stored (replacing this detector's previous output)
+Job_0703: 41 candidate boxes stored (replacing this detector's previous output)
+Job_0720: 33 candidate boxes stored (replacing this detector's previous output)
+Job_0730: 49 candidate boxes stored (replacing this detector's previous output)
+```
+
+### What is stored now, with provenance
+
+```console
+$ .venv/bin/python -c "
+from core import boxes
+tot = 0
+for j in ['Job_0696','Job_0703','Job_0720','Job_0730']:
+    bs = boxes.load_boxes(j); tot += len(bs)
+    det = [b for b in bs if b.detector is not None]
+    hum = [b for b in bs if b.detector is None]
+    vers = sorted({b.detector_version for b in det})
+    runs = sorted({b.run_id for b in det})
+    print(f'{j}: {len(bs):3d} stored = {len(det):3d} detector + {len(hum)} human   version={vers} runs={len(runs)}')
+print(f'TOTAL stored: {tot}  (166 detector + 1 human-drawn box preserved in Job_0696)')
+"
+Job_0696:  44 stored =  43 detector + 1 human   version=['3d7bb2d-dirty'] runs=1
+Job_0703:  41 stored =  41 detector + 0 human   version=['3d7bb2d-dirty'] runs=1
+Job_0720:  33 stored =  33 detector + 0 human   version=['3d7bb2d-dirty'] runs=1
+Job_0730:  49 stored =  49 detector + 0 human   version=['3d7bb2d-dirty'] runs=1
+TOTAL stored: 167  (166 detector + 1 human-drawn box preserved in Job_0696)
+```
+
+### Credibility funnel, regenerated set
+
+```console
+$ .venv/bin/python scripts/credibility_report.py
+job         boxes  credible   corroborated (2+ ch)  clustered objects
+Job_0696       44        25                      6                  7
+Job_0703       41        21                      2                  3
+Job_0720       33        18                      1                  1
+Job_0730       49        24                      4                  4
+
+TOTAL: 167 boxes -> 88 credible -> 13 corroborated on 2+ channels (of 15 clustered objects)
+```
+
+## 3d — the two claims, re-derived. Both are withdrawn.
+
+The original claims were **"the direct-wave fix recovered real signal"** and **"corroboration
+roughly doubled (7.7% → 14%)"**. They came from comparing a 158-box pre-fix count against the
+**233-box union — which contained those same 158 boxes**. That is not a comparison.
+
+The pre-fix detector is reconstructible from the fix's own comment: it blanked a flat fraction
+("12%", = 31 samples of 256) on every channel, where today's blanks a real time (3.07 ns), which
+is 31/15/8 samples on RAD/RA1/RA2. So the fix only changed anything on RA1 and RA2.
+`scripts/compare_detector_versions.py` runs both, each from scratch, on clean box sets.
+
+
+### Pre-fix vs post-fix detector, both on clean box sets
+
+```console
+$ .venv/bin/python scripts/compare_detector_versions.py
+
+PRE-FIX  (flat 12% skip, 31 samples on every channel)
+  job           boxes  credible  corroborated  objects
+  Job_0696         43        26             2        6
+  Job_0703         35        21             3        3
+  Job_0720         34        19             2        2
+  Job_0730         43        26             4        5
+  TOTAL           155        92            11       16
+  corroborated as a share of credible: 12.0%
+
+POST-FIX (per-channel 3.07 ns skip: 31/15/8 samples)
+  job           boxes  credible  corroborated  objects
+  Job_0696         43        25             2        7
+  Job_0703         41        21             3        3
+  Job_0720         33        18             0        1
+  Job_0730         49        24             7        4
+  TOTAL           166        88            12       15
+  corroborated as a share of credible: 13.6%
+```
+
+### Multi-channel vs genuinely corroborated, regenerated set
+
+```console
+$ .venv/bin/python scripts/credibility_report.py
+job         boxes  credible  on 2+ ch  corroborated  clustered objects
+Job_0696       44        25         6             1                  7
+Job_0703       41        21         2             1                  3
+Job_0720       33        18         1             0                  1
+Job_0730       49        24         4             3                  4
+
+TOTAL: 167 boxes -> 88 credible -> 13 on 2+ channels -> 5 corroborated (2+ channels AND agreeing on permittivity), of 15 clustered objects
+
+'corroborated' is the number to quote: two channels landing in one cluster while disagreeing
+about the ground they measured is a coincidence, not corroboration.
+```
+
+### Verdict
+
+| Claim | Status | Evidence |
+|---|---|---|
+| "the direct-wave fix recovered real signal" | **withdrawn — not supported** | Like-for-like, boxes rose 155 → 166 (+7%), but **credible targets fell 92 → 88**, corroborated moved 11 → 12, objects 16 → 15. A fix that recovered real signal should raise the credible count; it lowered it. The movement is within what one or two targets shifting explains. |
+| "corroboration roughly doubled (7.7% → 14%)" | **withdrawn — false** | Corroborated as a share of credible: **12.0% → 13.6%**, a 1.6-point move. The apparent doubling was an artifact of measuring the pre-fix count against a union containing it. |
+
+The fix itself is still correct — blanking a fixed *time* rather than a fixed *fraction* is the
+right thing to do on channels that sample at 0.1/0.2/0.4 ns, and that argument stands on physics,
+not on these counts. What is withdrawn is the claim that its benefit was *measured*. It was not.
+
+### A second overclaim found while re-deriving
+
+`scripts/credibility_report.py` printed `n_channels >= 2` under the heading "corroborated".
+That skips the permittivity-agreement check in `studio/corroborate.py`, whose own docstring
+records that it removed 8 of 14 "corroborated" targets, including pairs whose implied
+permittivities differed by a factor of 20. Two channels landing in one cluster while disagreeing
+about the ground they measured is a coincidence, not corroboration.
+
+On the regenerated set the two numbers are **13 on 2+ channels** and **5 actually corroborated**.
+The script now prints both, and names the second as the one to quote. **Every previously
+published corroboration figure was the loose count.**
+
+## The regenerated funnel — the numbers to use
+
+| | count |
+|---|---|
+| Candidate boxes stored | **167** (166 detector + 1 human-drawn, preserved) |
+| Pass the credibility check | **88** |
+| Clustered objects | **15** |
+| Clusters spanning 2+ frequency channels | **13** |
+| **Corroborated** (2+ channels *and* agreeing on permittivity) | **5** |
+
+---
+
+# Adaptive RANSAC (step 5) — proposed, measured, **rejected**
+
+`docs/INCREMENTAL_PROCESSING.md` projected a 13–20× saving from replacing the fixed
+2000-iteration RANSAC budget with the textbook adaptive count, N = log(1-p)/log(1-w³) at
+p=0.999. That projection was **wrong**, and the measurement below is why.
+
+The formula bounds the probability of *drawing one outlier-free 3-point sample*. It says
+nothing about having found the **maximal consensus set** — and this fitter's answer is a
+least-squares refit over whichever inlier set was largest. With a 4-sample residual tolerance
+admitting borderline ridge points, larger consensus sets keep appearing late in the run, and
+each one moves the refit. Stopping early therefore does not return the same fit sooner; it
+returns a different, less-supported fit.
+
+Equivalence tolerances, stated up front: accept/reject exact, credibility verdict exact,
+apex trace ≤ 0.5 traces, apex sample ≤ 0.5 samples, velocity ≤ 1%, depth ≤ 0.01 m.
+
+
+### Adaptive RANSAC vs the fixed budget, every stored box, floor swept
+
+```console
+$ .venv/bin/python scripts/ransac_adaptive_experiment.py
+baseline (fixed 2000 iterations): 3686 ms over 167 boxes = 22.07 ms/box, 921 ms/line
+
+  floor  disagreements   identical   ms/box  ms/line  speedup
+     50            134     83/129      2.87      120     7.7x
+    100            112     91/129      3.27      137     6.7x
+    250             85    100/130      4.70      196     4.7x
+    500             51    112/130      7.14      298     3.1x
+   1000             12    126/130     12.10      505     1.8x
+   1500              5    129/130     18.40      768     1.2x
+   2000              0    130/130     24.00     1002     0.9x
+
+A sample of the disagreements at floor=50 (the fastest setting):
+  - Job_0696/RA1/159805b4: x0 off by 3.747 traces
+  - Job_0696/RA1/159805b4: t0 off by 2.393 samples
+  - Job_0696/RA1/159805b4: velocity off by 14.63%
+  - Job_0696/RA1/159805b4: depth off by 0.0515 m
+  - Job_0696/RA1/47a69aa1: x0 off by 2.134 traces
+  - Job_0696/RA1/47a69aa1: t0 off by 0.551 samples
+  - Job_0696/RA1/47a69aa1: velocity off by 5.41%
+  - Job_0696/RA1/47a69aa1: depth off by 0.0191 m
+
+Conclusion: equivalence holds only at floor=2000 — i.e. only with the early exit
+disabled. The optimisation cannot be adopted without changing reported measurements.
+```
+
+### Verdict: not adopted
+
+Equivalence holds **only at floor = 2000**, which is the optimisation switched off. At the
+fastest setting it changes 134 measurements, including apex positions by several traces,
+velocities by up to ~26%, depths by up to 0.22 m, and — worst — it flips accept/reject on
+targets, meaning a target found by the shipped fitter can simply vanish.
+
+`detect/hyperbola.py` is therefore **unchanged**, still running the fixed 2000 iterations, and
+the headroom figure is unchanged at ~1.36 s/line and ~5.1× against walking pace. The
+experiment is kept as `scripts/ransac_adaptive_experiment.py` so this is not re-proposed from
+theory a third time.
+
+**The honest route to the same speed** is vectorising the iteration loop in numpy — drawing all
+2000 candidate triplets as arrays instead of a Python loop. That performs *identical* work in a
+different order, so it cannot change any fit, and the same equivalence harness would confirm it
+bit-for-bit. Not attempted here.
+
+---
+
+# Background self-subtraction (step 6) — measured, and smaller than projected
+
+`docs/INCREMENTAL_PROCESSING.md` §4 projected that a p90-width target loses ~17% of its own
+amplitude to the whole-line mean background, reasoning from trace-count share (65 traces of 386).
+**That estimate was wrong.** A target contributes to the mean trace in proportion to its
+*amplitude*, not its trace count, and the direct wave and ringing dominate the mean far more
+than any target does. Measured on all 88 credible targets:
+
+### Self-subtraction, all credible targets on the four lines
+
+```console
+$ .venv/bin/python scripts/background_self_subtraction.py
+credible targets measured: 88
+
+amplitude the target loses to its own presence in the whole-line mean background:
+  median 1.74%   p90 4.08%   max 11.35%   min -3.73%
+  targets losing >5%: 3/88    >10%: 1/88
+
+depth-pick shift when the target is excluded from its own background (n=88):
+  median 0.0 mm   p90 0.0 mm   max 0.0 mm
+  apex sample shift: median 0.00  max 0.00 samples
+
+worst 6 by amplitude loss (target width in traces):
+  Job_0696/RA2       width= 130 traces  loss= 11.35%
+  Job_0720/RA2       width=  66 traces  loss=  8.51%
+  Job_0703/RA2       width=  39 traces  loss=  5.43%
+  Job_0720/RA1       width=  90 traces  loss=  4.69%
+  Job_0720/RA1       width=  34 traces  loss=  4.55%
+  Job_0703/RA1       width=  54 traces  loss=  4.53%
+```
+
+### Verdict
+
+The effect is real but small: **1.74% median amplitude loss, 4.08% at p90, 11.35% worst**, and
+**no depth-pick shift at all** — 0.0 mm on every one of the 88 targets, and 0.00 samples of apex
+movement. The ridge-point picks that drive the fit are argmax positions, which a few percent of
+amplitude scaling does not move.
+
+So whole-line mean background removal is **not** meaningfully corrupting the measurements this
+project reports, and the sliding-window design in §4 should not be justified on self-subtraction
+grounds. Its real justification is the live-processing one: a whole-line mean cannot be computed
+from data that has not arrived yet. Processing is unchanged, per the instruction to plan only.
+
+The one caveat worth keeping: the worst case (11.35%) is a 130-trace-wide target, and width is
+what drives this. A site with genuinely long linear features — a duct bank running along the
+line rather than crossing it — would sit further up this curve than anything in the delivered
+data. That is the case to re-measure if it ever arrives, not a reason to change anything now.
+
+---
+
+# Traceability: every published figure → the line here that produced it
+
+Any number appearing in the three client-facing artifacts, `CAPABILITY_STATEMENT.md`, or the
+vault must appear in this table. If it does not, it is not a measured figure and must not ship.
+
+| Published figure | Value | Section in this document | Command that produced it |
+|---|---|---|---|
+| Candidate boxes stored | 167 (166 detector + 1 human) | Box-set regeneration → "What is stored now, with provenance" | `scripts/detect_candidates.py --all` |
+| Pass credibility check | 88 | Box-set regeneration → "Credibility funnel, regenerated set" | `scripts/credibility_report.py` |
+| Distinct clustered objects | 15 | same | same |
+| Seen on 2+ frequency channels | 13 | same | same |
+| **Corroborated** (2+ channels *and* permittivity agreement) | **5** | same | same |
+| Per-line funnel (44/25/6/1/7, 41/21/2/1/3, 33/18/1/0/1, 49/24/4/3/4) | — | same | same |
+| Parse time, one channel | ~0.5 ms cold, ~0.45 ms median | Reconciliation A1, contexts 1–4 | four separate timing harnesses |
+| Per-line processing, cold, all stages | ~1.36 s | Reconciliation A2 → "Corrected Part 3 per-line budget" | cold-path profile + measured fit cost |
+| Walking-pace headroom | 5.1× | same | derived: 6.9 s budget ÷ 1.36 s |
+| RANSAC fit cost | 21.6–22.1 ms/box, 419–429 ms/channel | Reconciliation A2 → fit cost table | fit over the stored set |
+| Pre-fix vs post-fix detector | 155→166 boxes, 92→88 credible, 12.0%→13.6% | 3d | `scripts/compare_detector_versions.py` |
+| Adaptive RANSAC speedup / disagreements | 7.6× at 134 disagreements; 0 disagreements only at 1.0× | Adaptive RANSAC (step 5) | `scripts/ransac_adaptive_experiment.py` |
+| Background self-subtraction | 1.74% median, 11.35% worst, 0.0 mm depth shift | Background self-subtraction (step 6) | `scripts/background_self_subtraction.py` |
+| Header fields per channel file | 33 (was 52 with parser noise) | Part 2 + the tightened-regex test | `tests/test_parsers_spr.py` |
+| Test / lint / type gate | 947 passed, ruff clean, mypy clean (72 modules) | Part 1 | `pytest -q`, `ruff check .`, `mypy ...` |
+
+**Withdrawn and not published anywhere:** "the direct-wave fix recovered real signal";
+"corroboration roughly doubled"; the 233 → 119 → 17 funnel; "0.8 ms to parse one channel";
+"independent receivers"; any PAS 128 QL-B grade; ASCE 38 equivalence.

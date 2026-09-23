@@ -91,11 +91,22 @@ from itself. To keep self-subtraction under ~10%, W ≥ 10·E.
 | p90, 65 traces **[M]** | 650 | 16.3 m | 11.6 s |
 | p99, 186 traces **[M]** | 1860 | 46.5 m | 33 s |
 
-**The finding: the delivered lines are 386 traces, shorter than the window a p90 target would
-need.** So on this data the *existing whole-line* background already self-subtracts a p90 target
-by roughly 65/386 ≈ 17%. That is a pre-existing weakness in the batch pipeline that this exercise
-uncovered — not something incremental processing introduces. It should be measured and reported
-on its own, independently of the live work.
+**The finding, and its correction — measured 2026-09-23.** The table above reasons from trace
+counts, and on that basis an earlier version of this section claimed the existing whole-line
+background already self-subtracts a p90 target by roughly 65/386 ≈ 17%. **That was wrong.** A
+target contributes to the mean trace in proportion to its *amplitude*, not its share of the
+trace count, and the direct wave and ringing dominate the mean far more than any target does.
+
+Measured across all 88 credible targets on the four lines
+(`scripts/background_self_subtraction.py`, raw output in `VERIFICATION_2026-09-23.md`) **[M]**:
+**1.74% median amplitude loss, 4.08% at p90, 11.35% worst — and zero depth-pick shift**, 0.0 mm
+on every target, 0.00 samples of apex movement. The ridge picks driving the fit are argmax
+positions and do not move for a few percent of amplitude.
+
+So self-subtraction is **not** a reason to change background removal. The justification for the
+sliding window is purely the live one: a whole-line mean cannot be computed from data that has
+not arrived. Worth re-measuring only if a site brings genuinely long linear features — the 11.35%
+worst case was a 130-trace-wide target, and width is what drives this.
 
 **Consequences for the design:**
 - Use a **median**, not a mean, over the window. A median is far less moved by a target
@@ -184,23 +195,36 @@ than 8 ridge points. The gate is sound in principle and fires on nothing here.
 channel. The envelope costs 1.5 ms **[M]**, so hoisting it to once per channel saves 27.6 ms of
 435 ms **[M]** — **6%**. Worth doing (it is a clear redundancy) but it is not the answer.
 
-**✓ Adaptive iteration count is the big one.** `detect/hyperbola.py` runs a fixed
-`_RANSAC_ITERATIONS = 2000` in a Python loop; measured fit cost is 20.87 ms/box **[M]**, i.e. the
-loop *is* the cost. Standard RANSAC theory gives the iterations needed as
-N = log(1−p) / log(1−w³) for 3-point samples. Measured inlier fractions over 180 real fits:
-median w = 0.70, p10 = 0.43, min = 0.36 **[M]**. So:
+**✗ Adaptive iteration count — proposed here, implemented, measured, and REJECTED (2026-09-23).**
 
-| Confidence p | w | N needed | vs 2000 |
+This section previously projected 13–20× from replacing the fixed `_RANSAC_ITERATIONS = 2000`
+with the textbook adaptive count N = log(1−p)/log(1−w³). **That projection was wrong and the
+change was reverted.** Keeping the reasoning here because the error is instructive:
+
+The formula bounds the probability of *drawing one outlier-free 3-point sample*. It says nothing
+about having found the **maximal consensus set**, and this fitter's answer is a least-squares
+refit over whichever inlier set was largest. With a 4-sample residual tolerance admitting
+borderline ridge points, larger sets keep appearing late in the run and each one moves the refit.
+So early exit returns a *different, less-supported* fit, not the same fit sooner.
+
+Measured against the equivalence harness (`scripts/ransac_adaptive_experiment.py`, raw output in
+`docs/pilot/VERIFICATION_2026-09-23.md`) **[M]**:
+
+| Iteration floor | Disagreements | Fits identical | Speedup |
 |---|---|---|---|
-| 0.99 | 0.70 (median) | 11 | 178× |
-| 0.99 | 0.43 (p10) | 56 | 36× |
-| 0.99 | 0.36 (worst observed) | 99 | 20× |
-| 0.999 | 0.36 (worst observed) | 148 | 14× |
+| 50 | 134 | 83/129 | 7.6× |
+| 250 | 85 | 100/130 | 4.7× |
+| 1000 | 12 | 126/130 | 1.8× |
+| 2000 (= off) | **0** | 130/130 | 1.0× |
 
-**Expected speedup: 13–20× even sizing for the worst fit observed**, by terminating early once
-the consensus set implies enough confidence. This must be validated as *identical results*, not
-just faster — the seed makes each fit deterministic, so a direct before/after comparison of every
-fit on all 233 boxes is straightforward and should be the acceptance test.
+Equivalence holds only with the optimisation disabled. At the fast settings it moved apex
+positions by several traces, velocities by up to 26%, depths by up to 0.22 m, and flipped
+accept/reject — a target the shipped fitter finds can vanish. `detect/hyperbola.py` is unchanged.
+
+**✓ The honest route to the same speed: vectorise the loop.** Draw all 2000 candidate triplets
+as numpy arrays instead of iterating in Python. That does *identical* work in a different order,
+so it cannot change a fit, and the same harness would confirm it bit-for-bit. Not yet attempted;
+this is now the first thing to try, not the adaptive count.
 
 **✓ Parallelism is available and independent of the above.** 10 CPUs **[M]**; each box fit is
 independent and seeded. Realistic expectation **6–8×**, not 10×: process-pool dispatch overhead
@@ -214,10 +238,12 @@ the fit from 93% of the budget into a rounding error, and makes the per-chunk 50
 
 ## 8. Sequencing
 
-1. **Measure the warm-up/self-subtraction problem on batch first** (§4's finding). It is a
-   pre-existing weakness and knowing its size changes how much §4 matters.
-2. **Adaptive RANSAC** (§7) with identical-results validation. Biggest win, lowest risk,
-   independent of everything else, and useful to the batch path too.
+1. ~~**Measure the self-subtraction problem on batch first**~~ — **done 2026-09-23**: it is
+   1.74% median, 11.35% worst, with zero depth impact (§4). Not a blocker, and not a
+   justification for the sliding window either.
+2. ~~**Adaptive RANSAC** (§7)~~ — **done and rejected**: it fails identical-results validation
+   (see §7). Replaced by **vectorising the RANSAC loop in numpy**, which cannot change a fit and
+   is validated by the same harness.
 3. **Chunked replay harness** (§6) against the current whole-line pipeline, before changing any
    processing — establishes the reference and the measurement code.
 4. **Windowed background + threshold** (§4, §5 option A), measured through step 3.

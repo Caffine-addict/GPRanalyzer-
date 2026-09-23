@@ -24,6 +24,7 @@ Usage:
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,6 +37,39 @@ from core import boxes as box_store
 from detect.measure import direct_wave_skip_samples
 from studio.session import CHANNEL_ORDER as _CHANNEL_ORDER
 from studio.session import load_frame as _load_channel_by_job
+
+# The detector's stable identity. Replacement in core/boxes.py keys on this name, NOT on the
+# version below, so changing the detection logic still replaces this detector's own earlier
+# output instead of accumulating beside it. Change the name only if this becomes a genuinely
+# different detector that should coexist with this one.
+DETECTOR_NAME = "energy-envelope-candidates"
+
+
+def detector_version() -> str:
+    """What this detector was when it ran, for provenance on the boxes it stores.
+
+    Returns the repo's short commit hash, suffixed `-dirty` when the working tree has edits
+    (so a box traced back to `3d7bb2d-dirty` is known not to be reproducible from that commit
+    alone), or `"unknown"` when git is absent, this is not a repo, the command fails, or it
+    does not answer promptly. Never used to decide what gets replaced; see DETECTOR_NAME.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=5,
+            cwd=Path(__file__).resolve().parent.parent,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, check=True, timeout=5,
+            cwd=Path(__file__).resolve().parent.parent,
+        ).stdout.strip()
+    # A hung git (index lock, credential prompt) must not stall the pipeline for a field that
+    # is provenance only — time out and record that we do not know.
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return "unknown"
+    return f"{head}-dirty" if dirty else head
+
 
 _ENVELOPE_BLUR_KSIZE = (3, 17)  # (trace, sample) -- collapses the ~6-sample wavelet cycle
 _ROW_BACKGROUND_FLOOR_FRACTION = 0.15  # guards depth-wise normalization against near-zero background rows
@@ -103,9 +137,16 @@ def find_candidate_boxes(traces: np.ndarray, sample_interval_ns: float) -> list[
 
 
 def detect_and_store(job_dir: Path) -> int:
-    job_name = job_dir.name
-    existing = {(b.channel, round(b.x), round(b.y)) for b in box_store.load_boxes(job_name)}
-    n_added = 0
+    """Run this detector over every channel of a job and store the result.
+
+    **Replaces this detector's previous output rather than adding to it.** The earlier version
+    appended any box whose rounded coordinates were not already present, which silently built a
+    union across detector versions: 233 stored boxes against 166 the detector actually found,
+    67 of them unreproducible and written before the direct-wave-skip fix. Every published
+    number came from that union. `core.boxes.replace_detector_boxes` is where the rule lives;
+    human-drawn boxes are never touched by it.
+    """
+    detected: list[box_store.DetectedBox] = []
     for ext, _label in _CHANNEL_ORDER:
         candidate = job_dir / f"Single-01.{ext}"
         if not candidate.exists():
@@ -113,16 +154,21 @@ def detect_and_store(job_dir: Path) -> int:
         frame = _load_channel_by_job(job_dir, ext)
         assert frame.traces is not None
         assert frame.sample_interval_ns is not None
-        for x, y, w, h in find_candidate_boxes(frame.traces, frame.sample_interval_ns):
-            key = (ext, round(float(x)), round(float(y)))
-            if key in existing:
-                continue  # avoid duplicating a box already stored (e.g. from a manual click)
-            box_store.add_box(
-                job_name, channel=ext, x=float(x), y=float(y), w=float(w), h=float(h),
+        detected.extend(
+            box_store.DetectedBox(
+                channel=ext, x=float(x), y=float(y), w=float(w), h=float(h),
                 note="auto: background-removal + energy-envelope candidate, unclassified",
             )
-            n_added += 1
-    return n_added
+            for x, y, w, h in find_candidate_boxes(frame.traces, frame.sample_interval_ns)
+        )
+
+    stored = box_store.replace_detector_boxes(
+        job_dir.name,
+        detector=DETECTOR_NAME,
+        detector_version=detector_version(),
+        boxes=detected,
+    )
+    return len(stored)
 
 
 if __name__ == "__main__":
@@ -137,5 +183,5 @@ if __name__ == "__main__":
         job_dirs = [Path(sys.argv[1])]
 
     for jd in job_dirs:
-        added = detect_and_store(jd)
-        print(f"{jd.name}: +{added} candidate boxes")
+        stored = detect_and_store(jd)
+        print(f"{jd.name}: {stored} candidate boxes stored (replacing this detector's previous output)")

@@ -16,13 +16,16 @@ faster and more consistently than doing it by eye alone:
   its depth comes from a wave velocity measured on that target, not assumed from an operator
   dial — and the system says so (`calibrated`) rather than letting an assumption pass as a
   measurement (`estimated`).
-- **Cross-channel corroboration.** Three frequency channels (RAD/RA1/RA2) from one antenna head
-  see the same ground from the same position; a target confirmed on two or more frequency bands
-  is real evidence in a way a single detection on one line never is — though, since all three
-  channels share one antenna position and pass, this is multi-frequency confirmation, not
-  independently-positioned receiver corroboration (see `docs/pilot/CHANNEL_IDENTITY.md`, checked
-  2026-09-23 — an earlier version of this statement said "independent receivers," which the
-  header data does not support).
+- **Cross-channel corroboration — 5 targets, on the current numbers.** Three frequency channels
+  (RAD/RA1/RA2) from one antenna head see the same ground from the same position. Of 15 distinct
+  objects found across the four lines, 13 appear on two or more channels, but only **5** also
+  agree on the permittivity they imply — and only those 5 are corroboration rather than
+  coincidence, because two channels that disagree about the ground did not measure the same
+  thing. Since all three channels share one antenna position and pass, even those 5 are
+  multi-frequency confirmation, not independently-positioned receiver corroboration
+  (`docs/pilot/CHANNEL_IDENTITY.md`). Both corrections are recent: an earlier version of this
+  statement said "independent receivers", and the reporting script was quoting the 13 rather
+  than the 5. Raw output for every figure: `docs/pilot/VERIFICATION_2026-09-23.md`.
 - **Plain-language interpretation**, from a language model that is explicitly instructed to say
   when it cannot tell one thing from another (a small stone from a small pipe, for instance) —
   and does, in practice, say exactly that rather than guessing with confidence.
@@ -52,8 +55,13 @@ faster and more consistently than doing it by eye alone:
   place anything — see `GPS_DIAGNOSTIC.md`. This is a finding from checking the actual data, not
   a design limitation that could be coded around.
 - **Not validated against ground truth.** Nothing found so far has been checked against an
-  excavation or a utility record. One target (`Job_0703`) is corroborated on two frequency
-  channels, which is real evidence, but corroboration is not verification.
+  excavation or a utility record. 5 targets are corroborated across frequency channels that also
+  agree on the ground they imply, which is real evidence, but corroboration is not verification.
+- **No measured benefit claimed for the detector's own changes.** A previous claim that a fix to
+  the direct-wave handling "recovered real signal", and that corroboration "roughly doubled", was
+  re-derived on 2026-09-23 and **withdrawn**: like-for-like, candidate boxes rose 155→166 while
+  *credible* targets fell 92→88, and corroboration as a share of credible moved 12.0%→13.6%. The
+  fix is still right on physics; what was wrong was claiming its benefit had been measured.
 - **Not able to tell a stone from a cable from one line.** This is physics, not a software gap:
   both draw the same hyperbola. The system says so rather than guessing.
 

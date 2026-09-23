@@ -32,8 +32,8 @@ def main() -> int:
         print(f"no dataset at {_DATASET}")
         return 1
 
-    rows: list[tuple[str, int, int, int, int]] = []
-    total_boxes = total_credible = total_corroborated = total_objects = 0
+    rows: list[tuple[str, int, int, int, int, int]] = []
+    total_boxes = total_credible = total_multi_channel = total_corroborated = total_objects = 0
 
     for job_dir in sorted(d for d in _DATASET.iterdir() if d.is_dir()):
         job_name = job_dir.name
@@ -75,19 +75,37 @@ def main() -> int:
             )
 
         clusters = corroboration.corroborate(apexes)
-        corroborated = sum(1 for c in clusters if c.n_channels >= 2)
-        rows.append((job_name, len(boxes), credible, corroborated, len(clusters)))
+        # Two different numbers, reported side by side because they were being conflated.
+        # `n_channels >= 2` only asks whether two channels landed in the same cluster.
+        # `.corroborated` additionally requires the channels to agree about the ground they
+        # measured — studio/corroborate.py's permittivity check, whose own docstring records
+        # that it removed 8 of 14 "corroborated" targets, including pairs whose implied
+        # permittivities differed by a factor of 20. This script previously printed the loose
+        # count under the heading "corroborated", which overstated it: on the regenerated box
+        # set the two are 13 and 5.
+        multi_channel = sum(1 for c in clusters if c.n_channels >= 2)
+        corroborated = sum(1 for c in clusters if c.corroborated)
+        rows.append((job_name, len(boxes), credible, multi_channel, corroborated, len(clusters)))
         total_boxes += len(boxes)
         total_credible += credible
+        total_multi_channel += multi_channel
         total_corroborated += corroborated
         total_objects += len(clusters)
 
-    print(f"{'job':<10} {'boxes':>6} {'credible':>9} {'corroborated (2+ ch)':>22} {'clustered objects':>18}")
-    for job_name, n_boxes, n_credible, n_corr, n_obj in rows:
-        print(f"{job_name:<10} {n_boxes:6d} {n_credible:9d} {n_corr:22d} {n_obj:18d}")
+    print(
+        f"{'job':<10} {'boxes':>6} {'credible':>9} {'on 2+ ch':>9} "
+        f"{'corroborated':>13} {'clustered objects':>18}"
+    )
+    for job_name, n_boxes, n_credible, n_multi, n_corr, n_obj in rows:
+        print(f"{job_name:<10} {n_boxes:6d} {n_credible:9d} {n_multi:9d} {n_corr:13d} {n_obj:18d}")
     print(
         f"\nTOTAL: {total_boxes} boxes -> {total_credible} credible -> "
-        f"{total_corroborated} corroborated on 2+ channels (of {total_objects} clustered objects)"
+        f"{total_multi_channel} on 2+ channels -> {total_corroborated} corroborated "
+        f"(2+ channels AND agreeing on permittivity), of {total_objects} clustered objects"
+    )
+    print(
+        "\n'corroborated' is the number to quote: two channels landing in one cluster while "
+        "disagreeing\nabout the ground they measured is a coincidence, not corroboration."
     )
     return 0
 
