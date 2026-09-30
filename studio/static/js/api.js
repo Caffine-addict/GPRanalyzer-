@@ -84,3 +84,21 @@ export const interpretPick = (job, pickId) =>
   request(`/api/jobs/${encodeURIComponent(job)}/picks/${pickId}/interpret`, { method: "POST" });
 
 export const picksCsvUrl = (job) => `/api/jobs/${encodeURIComponent(job)}/picks.csv`;
+
+/* ---------- importing files (studio/imports.py) ---------- */
+
+function formWith(files, fields = {}) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, value);
+  for (const file of files) form.append("files", file, file.name);
+  return form;
+}
+
+export const importLine = (job, files) =>
+  request("/api/import/line", { method: "POST", body: formWith(files, { job }) });
+export const importReferences = (files) =>
+  request("/api/import/references", { method: "POST", body: formWith(files) });
+export const listImportedReferences = () => request("/api/import/references");
+export const importedReferenceUrl = (name) => `/api/import/references/${encodeURIComponent(name)}`;
+export const listDocuments = () => request("/api/documents");
+export const documentUrl = (path) => `/api/documents/${path.split("/").map(encodeURIComponent).join("/")}`;

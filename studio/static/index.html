@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPR Studio</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/studio.css">
 </head>
 <body>
@@ -61,6 +62,13 @@
     <section class="panel">
       <h2>Project</h2>
       <div class="tree" id="jobTree"><p class="empty">Scanning dataset…</p></div>
+    </section>
+
+    <section class="panel docs-panel">
+      <h2>Survey documents <span class="doc-total" id="docCount"></span>
+        <span class="hint" title="Drawings, reports and images found in the dataset folder. Click one to open it in a new tab. They are for reference beside the radargram — Studio does not read radar data from them.">?</span>
+      </h2>
+      <div class="doc-tree" id="docTree"><p class="empty">Scanning dataset…</p></div>
     </section>
 
     <section class="panel grow">

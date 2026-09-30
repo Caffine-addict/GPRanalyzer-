@@ -8,15 +8,18 @@
 import * as api from "./api.js";
 import * as ascan from "./ascan.js";
 import * as docks from "./docks.js";
+import * as documents from "./documents.js";
+import * as importDialog from "./import_dialog.js";
 import * as info from "./panel_info.js";
 import * as interact from "./interact.js";
 import * as interpretPanel from "./panel_interpret.js";
+import * as menus from "./menus.js";
 import * as modal from "./modal.js";
 import * as processing from "./panel_processing.js";
 import * as targets from "./panel_targets.js";
 import * as velocityPanel from "./panel_velocity.js";
 import * as view from "./view.js";
-import { activeChannel, activeVelocity, getState, setState, subscribe } from "./state.js";
+import { DEFAULT_PROCESSING, activeChannel, activeVelocity, getState, setState, subscribe } from "./state.js";
 import { el, replace } from "./dom.js";
 
 const ASCAN_DEBOUNCE_MS = 90;
@@ -379,10 +382,68 @@ function handleResize() {
   scheduleRender();
 }
 
+
+/* ---------- menu bar ---------- */
+
+async function afterLineImported(job) {
+  setState({ jobs: await api.listJobs() });
+  await openJob(job);
+}
+
+/* A readable starting view: remove the flat direct-wave band, then even out depth. The same
+ * chain the performance profile measures, so what an operator sees is what was timed. */
+const STANDARD_VIEW = { background_removal: "mean", gain: "agc" };
+
+function installMenus() {
+  const noLine = () => !getState().job;
+  const tool = (name, label, key) => ({ label, shortcut: key, action: () => setState({ tool: name }) });
+  menus.install({
+    file: () => [
+      { label: "Import files…", action: () => importDialog.open({ onLineImported: afterLineImported }) },
+      { label: "Reference drawings…", action: () => importDialog.showReferences() },
+      "-",
+      ...getState().jobs.map((job) => ({ label: `Open ${job}`, action: () => openJob(job) })),
+      "-",
+      {
+        label: "Export targets (CSV)",
+        disabled: noLine(),
+        hint: noLine() ? "Open a line first" : "",
+        action: () => window.open(api.picksCsvUrl(getState().job), "_blank"),
+      },
+    ],
+    process: () => [
+      { label: "Raw — no processing", action: () => setState({ processing: { ...DEFAULT_PROCESSING } }) },
+      { label: "Standard view (background removal + AGC)",
+        action: () => setState({ processing: { ...DEFAULT_PROCESSING, ...STANDARD_VIEW } }) },
+      { label: "Standard view + migration",
+        action: () => setState({ processing: { ...DEFAULT_PROCESSING, ...STANDARD_VIEW, migrate: true } }) },
+    ],
+    view: () => [
+      { label: "Zoom in", action: () => interact.zoomBy(1.25) },
+      { label: "Zoom out", action: () => interact.zoomBy(1 / 1.25) },
+      { label: "Fit line to window", shortcut: "F", action: resetView },
+      "-",
+      { label: `${getState().showCandidates ? "Hide" : "Show"} candidate regions`,
+        disabled: noLine(), action: () => setState({ showCandidates: !getState().showCandidates }) },
+      "-",
+      ...(getState().jobDetail?.channels ?? []).map((channel) => ({
+        label: `Channel: ${channel.label}`, action: () => selectChannel(channel.extension),
+      })),
+    ],
+    tools: () => [
+      tool("pan", "Pan / select", "H"),
+      tool("pick", "Mark a target", "P"),
+      tool("hyperbola", "Fit a hyperbola (velocity)", "V"),
+      tool("measure", "Measure distance and depth", "M"),
+    ],
+  });
+}
+
 /* ---------- boot ---------- */
 
 async function boot() {
   modal.init();
+  installMenus();
   docks.init({ onOpenJob: openJob, onSelectChannel: selectChannel });
   docks.initAccordions();
   velocityPanel.init({ onVelocityChange: setManualVelocity, onSaveTarget: () => savePick(null) });
@@ -435,6 +496,7 @@ async function boot() {
   );
   setState({ jobs, palettes, reference });
   docks.renderLibrary();
+  documents.render();
 
   const requested = new URLSearchParams(window.location.search);
   const deepLink = requested.get("job");

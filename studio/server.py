@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.config import Config, load_config
@@ -37,7 +37,7 @@ from reason.engine import GroqClient, ReasoningEngine
 from reason.prompt import build_evidence_block
 from reference import library as reference_library
 from studio import candidates as candidate_store
-from studio import interpret, render, session, velocity
+from studio import imports, interpret, render, session, velocity
 from studio import palette as palette_module
 from studio import picks as pick_store
 from studio.processing import chain_from_params, is_post_processed, run_chain
@@ -50,6 +50,28 @@ _DISPLAY_KEYS = frozenset({"palette", "contrast", "brightness", "width", "height
 
 app = FastAPI(title="GPR Studio")
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+@app.middleware("http")
+async def refuse_cross_site_writes(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Only the Studio's own page may change data.
+
+    The server is loopback-only and has no login, but a browser will still deliver a form or
+    fetch POST from any site the operator has open — those skip CORS preflight entirely. So any
+    write that a browser marks as coming from elsewhere is refused. Requests with neither header
+    (curl, scripts, the test client) are not from a browser page and are let through.
+    """
+    if request.method not in _SAFE_METHODS:
+        fetch_site = request.headers.get("sec-fetch-site")
+        origin = request.headers.get("origin")
+        own_origin = f"{request.url.scheme}://{request.url.netloc}"
+        if fetch_site in ("cross-site", "same-site") or (origin and origin != own_origin):
+            return JSONResponse({"detail": "refused: request did not come from GPR Studio's own page"},
+                                status_code=403)
+    return await call_next(request)
 
 
 def _dataset_dir(request: Request) -> Path:
@@ -548,3 +570,68 @@ def reference_sheet(sheet_name: str) -> FileResponse:
     except reference_library.ReferenceLibraryError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FileResponse(path, media_type="image/jpeg")
+
+
+# --- importing new files ------------------------------------------------------------------------
+# Radar lines become jobs; drawings go to a reference area beside the dataset. See studio/imports.py.
+
+
+async def _read_all(files: list[UploadFile]) -> list[imports.Upload]:
+    return [(upload.filename or "", await upload.read()) for upload in files]
+
+
+@app.post("/api/import/line")
+async def import_line(
+    request: Request,
+    job: str = Form(...),
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency-injection pattern
+) -> dict:
+    try:
+        stored = imports.import_line(_dataset_dir(request), job, await _read_all(files))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"job": job, "files": stored}
+
+
+@app.post("/api/import/references")
+async def import_references(
+    request: Request,
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency-injection pattern
+) -> dict:
+    try:
+        stored = imports.import_references(_dataset_dir(request), await _read_all(files))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"files": stored}
+
+
+@app.get("/api/import/references")
+def list_imported_references(request: Request) -> list[dict]:
+    return imports.list_references(_dataset_dir(request))
+
+
+@app.get("/api/import/references/{name}")
+def imported_reference(request: Request, name: str) -> FileResponse:
+    try:
+        path = imports.reference_path(_dataset_dir(request), name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"no reference drawing named {name!r}") from exc
+    # Inline, so PDFs and images open in the browser. Safe only because imports.REFERENCE_SUFFIXES
+    # admits no HTML or SVG: either would run script on this origin. Revisit this line if it ever does.
+    return FileResponse(path, filename=name, content_disposition_type="inline")
+
+
+@app.get("/api/documents")
+def list_documents(request: Request) -> list[dict]:
+    """Drawings and reports already in the dataset folder — see imports.list_documents."""
+    return imports.list_documents(_dataset_dir(request))
+
+
+@app.get("/api/documents/{doc_path:path}")
+def document(request: Request, doc_path: str) -> FileResponse:
+    try:
+        path = imports.document_path(_dataset_dir(request), doc_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"no document at {doc_path!r}") from exc
+    # Inline for the same reason, and under the same constraint, as imported_reference above.
+    return FileResponse(path, filename=path.name, content_disposition_type="inline")
