@@ -49,7 +49,11 @@ def pdf_rect(box: tuple[float, float, float, float], width: float, height: float
         return x0, height - bottom, x1, height - top
     if rotation % 360 == 180:
         return width - x1, top, width - x0, bottom
-    raise ValueError(f"page rotation {rotation} is not handled — only 0 and 180 occur in these drawings")
+    if rotation % 360 == 90:  # shown turned clockwise: the page's left edge is the top
+        return top, x0, bottom, x1
+    if rotation % 360 == 270:  # shown turned anticlockwise: the page's right edge is the top
+        return height - bottom, width - x1, height - top, width - x0
+    raise ValueError(f"page rotation {rotation} is not a multiple of 90")
 
 
 def _label(callout: Callout, sheet: Sheet) -> str:

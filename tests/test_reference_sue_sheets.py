@@ -201,7 +201,75 @@ def test_a_sheet_with_no_labels_at_all_does_not_count_the_long_sections_repeats(
     assert callouts(words) == [("ELECTRIC", 0.64)]
 
 
+def test_a_same_named_callout_far_off_in_x_is_not_deduped_as_a_repeat() -> None:
+    # Two genuinely different ELECTRIC call-outs, both on an unlocated (whole-drawing) read, 200
+    # pt apart in x: too far apart to be the long section's repeat of the same plan label.
+    words = [w("ELECTRIC", 100, 50), w("Depth=0.64m", 100, 58),
+             w("ELECTRIC", 300, 500), w("Depth=0.64m", 300, 508)]
+    assert callouts(words) == [("ELECTRIC", 0.64), ("ELECTRIC", 0.64)]
+
+
+def test_a_same_named_repeat_with_a_different_depth_is_not_deduped() -> None:
+    # Same utility name, close in x, but a different depth reading: two distinct call-outs, not
+    # a repeat of the same one (an actual repeat always carries the same depth as its original).
+    words = [w("ELECTRIC", 100, 50), w("Depth=0.64m", 100, 58),
+             w("ELECTRIC", 102, 500), w("Depth=0.80m", 102, 508)]
+    assert callouts(words) == [("ELECTRIC", 0.64), ("ELECTRIC", 0.80)]
+
+
 def test_with_no_labels_the_long_section_heading_alone_locates_the_plan() -> None:
     words = [w("L-SECTION", 314, 367, 30), w("UC", 300, 80), w("Depth", 295, 85), w("0.40m", 308, 85),
              w("UC", 500, 400), w("Depth", 495, 405), w("0.90m", 508, 405)]
     assert callouts(words) == [("UC", 0.40)]
+
+
+def test_pipe_line_is_one_utility_like_storm_water() -> None:
+    words = [w("Pipe", 100, 80, 12), w("Line", 113, 80, 12), w("Depth=1.50m", 100, 85, 25)]
+    assert callouts(words) == [("PIPE LINE", 1.50)]
+
+
+def test_a_letter_spaced_u_c_is_read_as_uc() -> None:
+    words = [w("U", 530, 53, 2.5), w("C", 533, 53, 2.5), w("Depth", 512, 58), w("1.00", 524, 58)]
+    assert callouts(words) == [("UC", 1.00)]
+
+
+def test_a_two_word_name_too_far_apart_does_not_merge() -> None:
+    # "STORM" and "WATER" 40 pt apart on the same line are two separate, unrelated labels, not
+    # one utility — merging is only for words that sit side by side.
+    words = [w("STORM", 100, 80, 17), w("WATER", 158, 80, 18), w("Depth", 109, 85), w("0.64", 122, 85)]
+    assert callouts(words) == []
+
+
+def test_one_plan_tick_is_anchored_with_the_long_section_scale() -> None:
+    # Section labels give 8.4 pt/m; CH-100 centred at 262, UC centred at 178 is 10 m before it.
+    words = [*SECTION, w("CH-100", 256, 140), w("UC", 172, 80), w("Depth", 167, 85), w("0.77m", 180, 85)]
+    (c,) = sue_sheets.callouts_from_words(words, **PAGE)
+    assert (c.chainage_m, c.chainage_source) == (pytest.approx(90.0, abs=0.1), "plan_ticks")
+
+
+def test_page_order_is_trusted_only_when_every_checkable_page_agrees() -> None:
+    assert sue_sheets.order_is_chainage([[0, 20], [], [140, 160], [200], []])
+    # Rajbhavan Road's PDF runs sheet 1, then 18 down to 2: its second page reads CH-1040.
+    assert not sue_sheets.order_is_chainage([[0, 20], [1040, 1060], [140], [200]])
+    assert not sue_sheets.order_is_chainage([[], []])  # nothing to check it against
+    # Two readable pages out of five can't vouch for the other three.
+    assert not sue_sheets.order_is_chainage([[0, 20], [], [140], [], []])
+    # A road's last sheet may run long: Ulsoor Road site-2 ends at CH-610 on its 10th page.
+    assert sue_sheets.order_is_chainage([[0], [80], *[[]] * 7, [560, 610]])
+    assert not sue_sheets.order_is_chainage([[0], [80], [610], [], []])
+
+
+def test_pages_out_of_order_get_no_chainage_from_their_position() -> None:
+    page_with_ticks = [*SECTION, w("CH-1040", 256, 140), w("CH-1060", 424, 140)]
+    page_without = [*SECTION, w("UC", 172, 80), w("Depth", 167, 85), w("0.77m", 180, 85)]
+    sheets = sue_sheets.read_pages([(page_with_ticks, 842.0, 595.0), (page_without, 842.0, 595.0)])
+    (c,) = sheets[1].callouts
+    assert (c.chainage_m, c.chainage_source) == (None, "unavailable")
+
+
+def test_two_section_labels_on_one_spot_give_no_scale_rather_than_a_crash() -> None:
+    # OCR produced exactly this on a real sheet, and the chainage fit divided by zero.
+    words = [w("000/0-HC", 88, 540, upright=False), w("020/0-HC", 88, 540, upright=False),
+             w("CH-100", 256, 140), w("UC", 172, 80), w("Depth", 167, 85), w("0.77m", 180, 85)]
+    (c,) = sue_sheets.callouts_from_words(words, **PAGE)
+    assert (c.chainage_m, c.chainage_source) == (None, "unavailable")

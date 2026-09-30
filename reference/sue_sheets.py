@@ -45,7 +45,7 @@ _LINE_GAP = (2.5, 8.0)
 _SAME_LINE = 1.5
 _NUMBER_REACH = 15.0
 _REPEAT_X = 5.0  # a long-section repeat sits within this many points of its plan label's x
-_SAFE_PATH_GAP = (3.0, 14.0)  # "Safe Path" sits above its own "Depth 2.00m" line
+_SAFE_PATH_GAP = (3.0, 18.0)  # "Safe Path" sits above its own "Depth 2.00m" line, left-aligned with "Safe"
 _LAT = re.compile(r"^Lat(\d{1,2}\.\d+)$")
 _LON = re.compile(r"^Long(\d{1,3}\.\d+)$")
 
@@ -86,6 +86,11 @@ def _tick_value(word: Word) -> int | None:
     return None
 
 
+def is_tick_label(text: str) -> bool:
+    """A plan tick ("CH-20") or long-section label ("CH-0/020"), either way round."""
+    return any(_TICK.match(t) or _SECTION_TICK.match(t) for t in (text, text[::-1]))
+
+
 def _ticks(words: Sequence[Word]) -> list[tuple[float, int, float]]:
     """(x centre, chainage, top) of every plan chainage tick label."""
     return [((w["x0"] + w["x1"]) / 2, v, w["top"]) for w in words if (v := _tick_value(w)) is not None]
@@ -120,24 +125,33 @@ def _section_scale(words: Sequence[Word]) -> tuple[float, float] | None:
     if len(labels) < 2:
         return None
     x0, x1 = ((w["x0"] + w["x1"]) / 2 for w in labels[:2])
+    if abs(x1 - x0) < 1.0:  # two labels on one spot (a misread or duplicate) give no scale
+        return None
     return x0, (x1 - x0) / _SECTION_TICK_SPACING_M
 
 
+# Utility names printed as two words, merged when they sit side by side on one line.
+# "U" "C" is how the text layer letter-spaces UC on some sheets.
+_TWO_WORD_NAMES = {("STORM", "WATER"): "STORM WATER", ("PIPE", "LINE"): "PIPE LINE", ("U", "C"): "UC"}
+
+
 def _names(words: Sequence[Word]) -> list[tuple[str, Word]]:
-    """Utility names with their boxes; STORM + WATER on one line merge into one name."""
+    """Utility names with their boxes; two-word names ("STORM WATER", "Pipe Line") merge into one."""
     out: list[tuple[str, Word]] = []
     used: set[int] = set()
     for i, w in enumerate(words):
         if i in used:
             continue
         text = w["text"].upper()
-        if text == "STORM":
-            partner = next((j for j, o in enumerate(words) if j != i and o["text"].upper() == "WATER"
+        seconds = {second: name for (first, second), name in _TWO_WORD_NAMES.items() if first == text}
+        if seconds:
+            partner = next((j for j, o in enumerate(words) if j != i and o["text"].upper() in seconds
                             and abs(o["top"] - w["top"]) <= _SAME_LINE and 0 <= o["x0"] - w["x1"] <= 6), None)
             if partner is not None:
                 used.add(partner)
                 o = words[partner]
-                out.append(("STORM WATER", {**w, "x1": o["x1"], "bottom": max(w["bottom"], o["bottom"])}))
+                out.append((seconds[o["text"].upper()],
+                            {**w, "x1": o["x1"], "bottom": max(w["bottom"], o["bottom"])}))
         elif text in UTILITIES:
             out.append((text, w))
     return [(name, box) for name, box in out if not any(box is words[j] for j in used)]
@@ -192,10 +206,19 @@ def _plan_words(words: Sequence[Word], height: float) -> list[Word]:
 
 def _chainage(words: Sequence[Word], plan: Sequence[Word],
               sheet_start_m: float | None) -> tuple[tuple[float, float] | None, str]:
-    """(metres = a*x + b, source), preferring the plan's own ticks over sheet order."""
-    if (fit := _chainage_fit(_ticks(plan))) is not None:
+    """(metres = a*x + b, source), preferring the plan's own ticks over sheet order.
+
+    Two plan ticks fix the line on their own; a single one fixes it with the long section's
+    scale. Only with no plan tick at all does the sheet's position in the PDF come in.
+    """
+    ticks = _ticks(plan)
+    if (fit := _chainage_fit(ticks)) is not None:
         return fit, "plan_ticks"
     scale = _section_scale(words)
+    if scale is not None and ticks:
+        x, value, _ = ticks[0]
+        per_m = scale[1]
+        return (1 / per_m, value - x / per_m), "plan_ticks"
     if scale is not None and sheet_start_m is not None:
         origin, per_m = scale
         return (1 / per_m, sheet_start_m - origin / per_m), "sheet_order"
@@ -258,10 +281,10 @@ def safe_path_from_words(words: Sequence[Word], height: float) -> float | None:
     del height
     drawing = _drawing_words(words)
     lines = _depth_lines(drawing)
-    for path_word in sorted((w for w in drawing if w["text"] == "Path"), key=lambda w: w["top"]):
+    for safe_word in sorted((w for w in drawing if w["text"] == "Safe"), key=lambda w: w["top"]):
         for line, value in lines:
-            if value is not None and _SAFE_PATH_GAP[0] <= line["top"] - path_word["top"] <= _SAFE_PATH_GAP[1] \
-                    and abs(line["x0"] - path_word["x0"]) <= 25:
+            if value is not None and _SAFE_PATH_GAP[0] <= line["top"] - safe_word["top"] <= _SAFE_PATH_GAP[1] \
+                    and abs(line["x0"] - safe_word["x0"]) <= 25:
                 return value
     return None
 
@@ -295,19 +318,56 @@ def geo_from_words(words: Sequence[Word], height: float,
     return points
 
 
+def has_text_layer(path: Path) -> bool:
+    """Whether the PDF's first page has any text to read (outlined drawings have none)."""
+    import pdfplumber
+
+    with pdfplumber.open(path) as pdf:
+        return bool(pdf.pages) and bool(pdf.pages[0].chars)
+
+
+_ORDER_TOLERANCE_M = 5.0  # a tick may sit this far outside its page's 60 m slot
+_MIN_CHECKED_PAGES = 3
+
+
+def order_is_chainage(page_ticks: Sequence[Sequence[int]]) -> bool:
+    """Whether the PDF's pages run in chainage order, 60 m each, as far as their ticks can tell.
+
+    `page_ticks` holds each page's plan tick values (empty where none could be read). Not
+    something to assume: one delivered drawing (Rajbhavan Road) runs sheet 1, then 18 down to 2.
+    Every page with ticks must have them inside its own 60 m slot (the last sheet may run long:
+    a 610 m road ends on a 70 m sheet), and at least three pages must be checkable — or every
+    page, in a drawing shorter than that — so one or two readable pages can't vouch for the rest.
+    """
+    last = len(page_ticks) - 1
+    checked = [(i, ticks) for i, ticks in enumerate(page_ticks) if ticks]
+    if len(checked) < min(_MIN_CHECKED_PAGES, len(page_ticks)) or not checked:
+        return False
+    return all(i * SHEET_LENGTH_M - _ORDER_TOLERANCE_M <= v
+               and (i == last or v <= (i + 1) * SHEET_LENGTH_M + _ORDER_TOLERANCE_M)
+               for i, ticks in checked for v in ticks)
+
+
+def read_pages(pages: Sequence[tuple[list[Word], float, float]]) -> list[Sheet]:
+    """Every page of one drawing, given each page's (words, width, height)."""
+    in_order = order_is_chainage([[v for _, v, _ in _ticks(_plan_words(words, height))]
+                                  for words, _, height in pages])
+    sheets = []
+    for index, (words, width, height) in enumerate(pages):
+        start = index * SHEET_LENGTH_M if in_order else None
+        sheets.append(Sheet(
+            page=index + 1,
+            callouts=tuple(callouts_from_words(words, width, height, sheet_start_m=start)),
+            safe_path_m=safe_path_from_words(words, height),
+            geo=tuple(geo_from_words(words, height, sheet_start_m=start)),
+        ))
+    return sheets
+
+
 def read_pdf(path: Path) -> list[Sheet]:
     """Read every page of one SUE drawing PDF."""
     import pdfplumber  # imported here so the pure functions above need no PDF library
 
-    sheets = []
     with pdfplumber.open(path) as pdf:
-        for number, page in enumerate(pdf.pages, start=1):
-            words = page.extract_words(x_tolerance=1.5, y_tolerance=1)
-            start = (number - 1) * SHEET_LENGTH_M
-            sheets.append(Sheet(
-                page=number,
-                callouts=tuple(callouts_from_words(words, page.width, page.height, sheet_start_m=start)),
-                safe_path_m=safe_path_from_words(words, page.height),
-                geo=tuple(geo_from_words(words, page.height, sheet_start_m=start)),
-            ))
-    return sheets
+        return read_pages([(page.extract_words(x_tolerance=1.5, y_tolerance=1), page.width, page.height)
+                           for page in pdf.pages])
