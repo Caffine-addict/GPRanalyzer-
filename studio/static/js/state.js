@@ -71,6 +71,13 @@ let state = Object.freeze({
   hyperbola: null,     // {apexTrace, apexTimeNs, velocity, curve[], source}
   measure: null,       // {from:{trace,sample}, to:{trace,sample}}
 
+  // Reasoning layers (studio/assistant.py) and the supervisor's review of their claims.
+  assistant: { tab: "chat", busy: null, error: null, live: false, chat: [], replies: {} },
+  reviews: [],             // every model claim on this job, proposed / confirmed / rejected
+  reviewScope: "channel",  // Review panel: "channel" or "all"
+  reviewer: "",            // the supervisor's name, remembered per browser
+  highlightReviewId: null,
+
   palettes: [],
   reference: [],
   status: null,        // transient message for the chain pill

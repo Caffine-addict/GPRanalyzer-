@@ -4,9 +4,9 @@ the configured rate. This is the heartbeat of everything downstream — if this
 doesn't run cleanly, nothing built on top of it will either.
 
 Usage:
-    .venv/bin/python scripts/replay_heartbeat.py [directory]
+    .venv/bin/python scripts/replay_heartbeat.py [path]
 
-If no directory is given, uses source.replay.directory from config.yaml.
+If no path is given, uses source.replay.path from config.yaml.
 """
 
 from __future__ import annotations
@@ -27,12 +27,12 @@ def main() -> int:
     cfg = load_config(Path(__file__).resolve().parent.parent / "config.yaml")
     replay_cfg = cfg.source.replay
     if len(sys.argv) > 1:
-        replay_cfg = replace(replay_cfg, directory=sys.argv[1])
+        replay_cfg = replace(replay_cfg, path=sys.argv[1])
 
     source = ReplaySource(replay_cfg)
     caps = source.capabilities()
     print(
-        f"source=replay directory={replay_cfg.directory} "
+        f"source=replay path={replay_cfg.path} "
         f"rate_hz={replay_cfg.playback_rate_hz} capabilities={caps}"
     )
 

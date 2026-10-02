@@ -174,7 +174,19 @@ def parse_spr(path: Path) -> ScanFrame:
         antenna_freq_mhz=None,
         sample_interval_ns=sampling_interval_ps / 1000.0,
         dielectric_assumed=float(dielectric) if dielectric is not None else None,
+        trace_spacing_m=_trace_spacing_m(header),
     )
+
+
+def _trace_spacing_m(header: dict[str, str]) -> float | None:
+    """Metres between traces, from the wheel encoder (SPR_SHAFT_INTERVAL) — None if absent or
+    unusable, rather than a guess. Verified against all four delivered lines at 0.025 m
+    (docs/pilot/GPS_DIAGNOSTIC.md)."""
+    try:
+        spacing = float(header["SPR_SHAFT_INTERVAL"])
+    except (KeyError, ValueError):
+        return None
+    return spacing if spacing > 0 else None
 
 
 register("rad", "ra1", "ra2")(parse_spr)

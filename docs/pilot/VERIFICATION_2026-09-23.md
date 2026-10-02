@@ -1354,15 +1354,179 @@ vault must appear in this table. If it does not, it is not a measured figure and
 | **Corroborated** (2+ channels *and* permittivity agreement) | **5** | same | same |
 | Per-line funnel (44/25/6/1/7, 41/21/2/1/3, 33/18/1/0/1, 49/24/4/3/4) | — | same | same |
 | Parse time, one channel | ~0.5 ms cold, ~0.45 ms median | Reconciliation A1, contexts 1–4 | four separate timing harnesses |
-| Per-line processing, cold, all stages | ~1.36 s | Reconciliation A2 → "Corrected Part 3 per-line budget" | cold-path profile + measured fit cost |
-| Walking-pace headroom | 5.1× | same | derived: 6.9 s budget ÷ 1.36 s |
-| RANSAC fit cost | 21.6–22.1 ms/box, 419–429 ms/channel | Reconciliation A2 → fit cost table | fit over the stored set |
-| Pre-fix vs post-fix detector | 155→166 boxes, 92→88 credible, 12.0%→13.6% | 3d | `scripts/compare_detector_versions.py` |
+| Per-line processing, cold, all stages (scalar RANSAC) | ~1.36 s | Reconciliation A2 → "Corrected Part 3 per-line budget" | cold-path profile + measured fit cost |
+| Per-line processing, cold, all stages (vectorised RANSAC) | **~0.38 s** (377/377/375 ms, 3 runs) | Follow-ups → "New cold-path budget" | re-measured budget script |
+| Walking-pace headroom | **~18×** (was 5.1×) | Follow-ups → "New cold-path budget" | derived: 6.9 s budget ÷ ~0.38 s |
+| RANSAC fit cost, scalar | 21.6–22.1 ms/box, 419–429 ms/channel | Reconciliation A2 → fit cost table | fit over the stored set |
+| RANSAC fit cost, vectorised | 8.85 ms/box, bit-identical to scalar (130/130) | RANSAC vectorisation | equivalence + timing script |
+| Pre-fix vs post-fix detector | 158→166 boxes (1/8 skip, matches history exactly), 94→88 credible, 11.7%→13.6% | Follow-ups → pre-fix reconstruction section | `scripts/compare_detector_versions.py` |
 | Adaptive RANSAC speedup / disagreements | 7.6× at 134 disagreements; 0 disagreements only at 1.0× | Adaptive RANSAC (step 5) | `scripts/ransac_adaptive_experiment.py` |
 | Background self-subtraction | 1.74% median, 11.35% worst, 0.0 mm depth shift | Background self-subtraction (step 6) | `scripts/background_self_subtraction.py` |
 | Header fields per channel file | 33 (was 52 with parser noise) | Part 2 + the tightened-regex test | `tests/test_parsers_spr.py` |
-| Test / lint / type gate | 947 passed, ruff clean, mypy clean (72 modules) | Part 1 | `pytest -q`, `ruff check .`, `mypy ...` |
+| Test / lint / type gate | 950 passed, ruff clean, mypy clean (72 modules) | Part 1 (baseline), updated through this session | `pytest -q`, `ruff check .`, `mypy ...` |
 
 **Withdrawn and not published anywhere:** "the direct-wave fix recovered real signal";
 "corroboration roughly doubled"; the 233 → 119 → 17 funnel; "0.8 ms to parse one channel";
 "independent receivers"; any PAS 128 QL-B grade; ASCE 38 equivalence.
+
+---
+
+# Follow-ups (2026-09-23, later the same day)
+
+## The pre-fix reconstruction: 155 vs the historical 158, resolved
+
+The first reconstruction of the pre-fix detector used a flat **0.12** of the record as the
+direct-wave skip, taken from the fix's own comment ("the same 12%"), and produced **155** boxes
+where the vault records **158** historically. That 3-box gap meant the reconstruction was
+approximate, and it has now been pinned down by sweeping the constant.
+
+**0.125 — exactly 1/8 of the record, 32 of 256 samples — reproduces 158 exactly.** The comment's
+"12%" was itself a rounding of 12.5%, and its quoted blanking depths (0.15/0.31/0.61 m) are the
+1/8 depths (0.16/0.32/0.64 m) rounded down. `scripts/compare_detector_versions.py` now uses 1/8.
+
+
+### Sweeping the pre-fix skip constant against the historical 158
+
+```console
+$ .venv/bin/python -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts')
+import detect_candidates as dc
+from studio import session
+D = Path('Dataset/DSU_GPR_Files')
+JOBS = sorted(d for d in D.iterdir() if d.is_dir())
+real = dc.direct_wave_skip_samples
+def count(fn):
+    dc.direct_wave_skip_samples = fn
+    n = 0
+    for job in JOBS:
+        for ext, _ in session.CHANNEL_ORDER:
+            if not (job / f'Single-01.{ext}').exists(): continue
+            fr = session.load_frame(job, ext)
+            n += len(dc.find_candidate_boxes(session.raw_traces(fr), float(fr.sample_interval_ns)))
+    dc.direct_wave_skip_samples = real
+    return n
+print('historical pre-fix count recorded in the vault: 158')
+for frac in (0.10, 0.11, 0.12, 0.125, 0.13, 0.15):
+    mark = '   <-- matches' if count(lambda n,s,f=frac: min(n, round(f*n))) == 158 else ''
+    print(f'  flat {frac:<6} of n_samples -> {count(lambda n,s,f=frac: min(n, round(f*n))):3d} boxes{mark}')
+"
+historical pre-fix count recorded in the vault: 158
+  flat 0.1    of n_samples -> 163 boxes
+  flat 0.11   of n_samples -> 162 boxes
+  flat 0.12   of n_samples -> 155 boxes
+  flat 0.125  of n_samples -> 158 boxes   <-- matches
+  flat 0.13   of n_samples -> 156 boxes
+  flat 0.15   of n_samples -> 151 boxes
+```
+
+### Pre-fix vs post-fix, corrected reconstruction (1/8 skip)
+
+```console
+$ .venv/bin/python scripts/compare_detector_versions.py
+
+PRE-FIX  (flat 1/8 skip, 32 samples on every channel)
+  job           boxes  credible  corroborated  objects
+  Job_0696         44        27             2        6
+  Job_0703         35        20             3        3
+  Job_0720         37        20             2        2
+  Job_0730         42        27             4        5
+  TOTAL           158        94            11       16
+  corroborated as a share of credible: 11.7%
+
+POST-FIX (per-channel 3.07 ns skip: 31/15/8 samples)
+  job           boxes  credible  corroborated  objects
+  Job_0696         43        25             2        7
+  Job_0703         41        21             3        3
+  Job_0720         33        18             0        1
+  Job_0730         49        24             7        4
+  TOTAL           166        88            12       15
+  corroborated as a share of credible: 13.6%
+```
+
+**The retraction is unchanged and now rests on an exact reconstruction:** boxes 158 → 166, but
+**credible targets fell 94 → 88**, and corroboration as a share of credible moved **11.7% → 13.6%**
+— not a doubling, and not a recovery of signal.
+
+Still a reconstruction, not the original code: the pre-fix detector was never committed on its own
+(it arrived inside the squashed commit `78b0f3b`), so this matches on the box count and on the
+documented blanking depths, which is the strongest check available without the original source.
+
+## RANSAC vectorisation — adopted, bit-identical
+
+The rejected adaptive-iteration change tried to do *less* work and changed the answers. This does
+the *same* work in a different order: the draws are still one `rng.choice` per iteration (a batched
+draw would consume the generator differently and change every fit), and only the arithmetic over
+those draws is vectorised across iterations.
+
+
+### Vectorised vs scalar consensus search: equivalence and timing
+
+```console
+$ .venv/bin/python -c "
+import time
+from pathlib import Path
+from core import boxes as box_store
+from detect import hyperbola
+from studio import session, velocity
+from studio.velocity import fit_rejection_reason
+D = Path('Dataset/DSU_GPR_Files')
+def run(scalar):
+    orig = hyperbola._best_consensus_set
+    if scalar: hyperbola._best_consensus_set = hyperbola._best_consensus_set_scalar
+    out, ms = {}, 0.0
+    try:
+        for job in sorted(d for d in D.iterdir() if d.is_dir()):
+            for box in box_store.load_boxes(job.name):
+                try: frame = session.load_frame(job, box.channel)
+                except Exception: continue
+                info = session.describe_channel(frame, box.channel); tr = session.raw_traces(frame)
+                t0 = time.perf_counter()
+                fit = velocity.fit_region(tr, trace_start=int(box.x), sample_start=int(box.y),
+                    trace_span=max(int(box.w),3), sample_span=max(int(box.h),3),
+                    trace_spacing_m=info.trace_spacing_m, sample_interval_ns=info.sample_interval_ns, seed=0)
+                ms += (time.perf_counter()-t0)*1000
+                out[f'{job.name}/{box.channel}/{box.id}'] = None if fit is None else (fit,
+                    fit_rejection_reason(fit, n_samples=info.n_samples, sample_interval_ns=info.sample_interval_ns))
+    finally: hyperbola._best_consensus_set = orig
+    return out, ms
+s, s_ms = run(True); v, v_ms = run(False)
+dis = compared = identical = 0
+for k in s:
+    a, b = s[k], v[k]
+    if (a is None) != (b is None): dis += 1; continue
+    if a is None: continue
+    compared += 1
+    fa, fb = a[0], b[0]
+    if (fa.apex_trace==fb.apex_trace and fa.apex_sample==fb.apex_sample and fa.velocity_m_per_ns==fb.velocity_m_per_ns
+        and fa.depth_m==fb.depth_m and fa.r2==fb.r2 and fa.n_inliers==fb.n_inliers and a[1]==b[1]): identical += 1
+    else: dis += 1
+print(f'boxes {len(s)}, produced a fit in both {compared}')
+print(f'BIT-IDENTICAL: {identical}/{compared}')
+print(f'DISAGREEMENTS: {dis}')
+print(f'scalar     {s_ms:8.1f} ms  ({s_ms/len(s):5.2f} ms/box, {s_ms/4:6.0f} ms/line)')
+print(f'vectorised {v_ms:8.1f} ms  ({v_ms/len(s):5.2f} ms/box, {v_ms/4:6.0f} ms/line)')
+print(f'speedup    {s_ms/v_ms:.2f}x')
+"
+boxes 167, produced a fit in both 130
+BIT-IDENTICAL: 130/130
+DISAGREEMENTS: 0
+scalar       3819.3 ms  (22.87 ms/box,    955 ms/line)
+vectorised   1182.5 ms  ( 7.08 ms/box,    296 ms/line)
+speedup    3.23x
+```
+
+### New cold-path budget
+
+Re-measured in three fresh processes: **377, 377, 375 ms per line** (3 channels, all stages,
+including DB writes). Down from ~1.36 s.
+
+| | before | after |
+|---|---|---|
+| Fit stage, per line | ~1.29 s | ~0.28 s |
+| **Whole line, cold, all stages** | **~1.36 s** | **~0.38 s** |
+| Headroom vs 6.9 s walking budget **[A: 1.4 m/s]** | 5.1× | **~18×** |
+
+The fit is still the dominant stage at ~75% of the total, so it remains the place to look next;
+the difference is that it is no longer the thing that would stop live use.

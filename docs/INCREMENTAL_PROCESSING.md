@@ -221,10 +221,16 @@ Equivalence holds only with the optimisation disabled. At the fast settings it m
 positions by several traces, velocities by up to 26%, depths by up to 0.22 m, and flipped
 accept/reject — a target the shipped fitter finds can vanish. `detect/hyperbola.py` is unchanged.
 
-**✓ The honest route to the same speed: vectorise the loop.** Draw all 2000 candidate triplets
-as numpy arrays instead of iterating in Python. That does *identical* work in a different order,
-so it cannot change a fit, and the same harness would confirm it bit-for-bit. Not yet attempted;
-this is now the first thing to try, not the adaptive count.
+**✓ Vectorising the loop — done, adopted, bit-identical (2026-09-23).** Same draws (still one
+`rng.choice` per iteration — a batched draw consumes the RNG differently and would change every
+fit), only the arithmetic over them moved from a Python loop to one batched `np.linalg.solve`
+over all 2000 candidate models per box. Measured over all 167 stored boxes: **130/130 fits
+bit-identical to the scalar version, zero disagreements**, 22.18 ms/box → 8.85 ms/box, 2.51×.
+
+**Cold per-line budget re-measured with the vectorised fit: ~0.38 s** (377/377/375 ms across
+three fresh-process runs), down from ~1.36 s. Walking-pace headroom is now **~18×**, not 5.1×.
+The fit is still the largest single stage (~75% of the total) but is no longer the thing that
+would stop live use.
 
 **✓ Parallelism is available and independent of the above.** 10 CPUs **[M]**; each box fit is
 independent and seeded. Realistic expectation **6–8×**, not 10×: process-pool dispatch overhead
@@ -241,9 +247,9 @@ the fit from 93% of the budget into a rounding error, and makes the per-chunk 50
 1. ~~**Measure the self-subtraction problem on batch first**~~ — **done 2026-09-23**: it is
    1.74% median, 11.35% worst, with zero depth impact (§4). Not a blocker, and not a
    justification for the sliding window either.
-2. ~~**Adaptive RANSAC** (§7)~~ — **done and rejected**: it fails identical-results validation
-   (see §7). Replaced by **vectorising the RANSAC loop in numpy**, which cannot change a fit and
-   is validated by the same harness.
+2. ~~**Adaptive RANSAC** (§7)~~ — **done and rejected**: it fails identical-results validation.
+   ~~**Vectorise the RANSAC loop**~~ — **done and adopted**: bit-identical, 2.51× faster,
+   cold per-line budget now ~0.38 s (~18× walking-pace headroom, was 5.1×).
 3. **Chunked replay harness** (§6) against the current whole-line pipeline, before changing any
    processing — establishes the reference and the measurement code.
 4. **Windowed background + threshold** (§4, §5 option A), measured through step 3.

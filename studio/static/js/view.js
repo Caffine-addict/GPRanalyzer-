@@ -173,6 +173,7 @@ export function draw() {
   drawCandidates(state, channel);
   drawHyperbola(state, channel);
   drawPicks(state, channel);
+  drawReviews(state, channel);
   drawMeasure(state, channel);
   drawMarquee(state);
   ctx.restore();
@@ -326,6 +327,57 @@ function drawHyperbola(state, channel) {
   ctx.beginPath();
   ctx.arc(apex.x, apex.y, 3.5, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+}
+
+/* A circle on every target a reasoning layer made a claim about, coloured by what a
+ * supervisor has decided: amber dashed while proposed, green once confirmed, red dotted if
+ * rejected. The circle is drawn on the target's own measured box, never somewhere a model
+ * chose, so it always sits on real data. */
+const REVIEW_STYLES = {
+  proposed: { colour: "#f5a623", dash: [6, 4], mark: "?" },
+  confirmed: { colour: "#34c77b", dash: [], mark: "✓" },
+  rejected: { colour: "#ff5d5d", dash: [2, 3], mark: "✗" },
+};
+
+function drawReviews(state, channel) {
+  ctx.save();
+  ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  // Every run adds its own claim, so one target can collect several pending readings; the
+  // canvas shows only the newest pending one per target (the Review panel keeps them all).
+  const newestPending = new Map();
+  for (const review of state.reviews) {
+    if (review.status !== "proposed" || review.channel !== channel.extension) continue;
+    const held = newestPending.get(review.target_id);
+    if (!held || review.created_at >= held.created_at) newestPending.set(review.target_id, review);
+  }
+  const shown = state.reviews.filter((r) => r.status !== "proposed" || newestPending.get(r.target_id) === r);
+  for (const review of shown) {
+    if (review.channel !== channel.extension) continue;
+    const style = REVIEW_STYLES[review.status] ?? REVIEW_STYLES.proposed;
+    const a = dataToScreen(state.view, review.x, review.y);
+    const b = dataToScreen(state.view, review.x + review.w, review.y + review.h);
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const rx = Math.max(10, Math.abs(b.x - a.x) / 2 + 6);
+    const ry = Math.max(10, Math.abs(b.y - a.y) / 2 + 6);
+    const highlighted = state.highlightReviewId === review.id;
+    ctx.strokeStyle = style.colour;
+    ctx.lineWidth = highlighted ? 3 : 1.8;
+    ctx.setLineDash(style.dash);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const label = `${style.mark} ${review.identity}`;
+    const width = ctx.measureText(label).width + 8;
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(10, 14, 20, 0.78)";
+    ctx.fillRect(cx - width / 2, cy - ry - 18, width, 15);
+    ctx.fillStyle = style.colour;
+    ctx.fillText(label, cx - width / 2 + 4, cy - ry - 7);
+  }
   ctx.restore();
 }
 

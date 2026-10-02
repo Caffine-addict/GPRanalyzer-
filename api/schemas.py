@@ -5,9 +5,12 @@ schema, just converts to plain JSON-safe dicts.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
-from core.contracts import Evidence, Finding, SourceCapabilities
+from core.contracts import Evidence, Finding, ScanFrame, SourceCapabilities, TraceBox
+from render.bscan import display_strip
+from sources.intake import Intake
 
 
 def evidence_to_dict(evidence: Evidence) -> dict[str, Any]:
@@ -38,6 +41,47 @@ def finding_to_dict(finding: Finding) -> dict[str, Any]:
         "how": finding.how,
         "recommended_action": finding.recommended_action,
         "reasoning_latency_ms": finding.reasoning_latency_ms,
+        "location": location_to_dict(finding.location),
+    }
+
+
+def location_to_dict(location: TraceBox | None) -> dict[str, int] | None:
+    if location is None:
+        return None
+    return {
+        "trace_start": location.trace_start,
+        "trace_end": location.trace_end,
+        "sample_start": location.sample_start,
+        "sample_end": location.sample_end,
+    }
+
+
+def frame_to_dict(frame: ScanFrame) -> dict[str, Any]:
+    """What the live radargram needs to paint this frame where it belongs on its line.
+
+    `pixels` is the display strip's raw uint8 bytes, row-major (rows = time), base64 — a few KB
+    per chunk, drawn straight into a canvas with no decoding step.
+    """
+    strip = display_strip(frame)
+    rows, cols = strip.shape[:2]
+    path = frame.provenance.get("path")
+    return {
+        "line": path,
+        "line_name": None if path is None else str(path).rsplit("/", 1)[-1],
+        "trace_offset": frame.trace_offset or 0,
+        "line_complete": frame.line_complete,
+        "width": cols,
+        "height": rows,
+        "trace_spacing_m": frame.trace_spacing_m,
+        "sample_interval_ns": frame.sample_interval_ns,
+        "pixels": base64.b64encode(strip.tobytes()).decode("ascii"),
+    }
+
+
+def intake_to_dict(intake: Intake) -> dict[str, Any]:
+    return {
+        "files": [str(p) for p in intake.files],
+        "skipped": [{"path": str(p), "reason": reason} for p, reason in intake.skipped],
     }
 
 

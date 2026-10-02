@@ -36,13 +36,13 @@ def _config(frames_dir: Path):
         cfg,
         source=replace(
             cfg.source,
-            replay=replace(cfg.source.replay, directory=str(frames_dir), step_mode=True),
+            replay=replace(cfg.source.replay, path=str(frames_dir), step_mode=True),
         ),
     )
 
 
 class _FakeDetector:
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return [Detection(class_name="cavities", confidence=0.8, bbox_xyxy=(10.0, 10.0, 50.0, 50.0))]
 
 
@@ -173,7 +173,9 @@ async def test_broadcast_receives_finding_created_and_reasoned(tmp_path: Path) -
     assert "finding.created" in types
     assert "finding.reasoned" in types
     assert all(m["survey_id"] == "survey-1" for m in broadcasts)
-    assert all("finding" in m for m in broadcasts)
+    findings = [m for m in broadcasts if m["type"] != "frame.chunk"]
+    assert all("finding" in m for m in findings)
+    assert all("frame" in m for m in broadcasts if m["type"] == "frame.chunk")
 
     # finding_id lets a client correlate "created" and "reasoned" for the same row — both
     # events here are for the survey's one finding, so they must carry the same real id.

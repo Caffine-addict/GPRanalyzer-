@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _config(weights_path: str) -> DetectionConfig:
     return DetectionConfig(
+        backend="yolo",
         weights_path=weights_path,
         conf_threshold=0.25,
         iou_threshold=0.7,

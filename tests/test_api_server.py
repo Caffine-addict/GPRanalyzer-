@@ -40,15 +40,25 @@ def _write_fixture_frames(directory: Path, n: int) -> None:
 def _write_test_config(tmp_path: Path, frames_dir: Path, *, step_mode: bool = True) -> Path:
     raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
     raw["store"]["path"] = str(tmp_path / "test.duckdb")
-    raw["source"]["replay"]["directory"] = str(frames_dir)
+    raw["source"]["replay"]["path"] = str(frames_dir)
     raw["source"]["replay"]["step_mode"] = step_mode
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return config_path
 
 
+def _finding_events(websocket, n: int) -> list[dict]:
+    """The next `n` finding events, skipping the frame.chunk display events between them."""
+    events: list[dict] = []
+    while len(events) < n:
+        event = websocket.receive_json()
+        if event["type"] != "frame.chunk":
+            events.append(event)
+    return events
+
+
 class _FakeDetector:
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return [Detection(class_name="cavities", confidence=0.8, bbox_xyxy=(10.0, 10.0, 50.0, 50.0))]
 
 
@@ -423,8 +433,8 @@ def test_websocket_receives_finding_created_then_reasoned_in_order(tmp_path: Pat
             start_response = client.post("/surveys/survey-1/start")
             assert start_response.status_code == 200
 
-            created = websocket.receive_json()
-            reasoned = websocket.receive_json()
+            finding_events = _finding_events(websocket, 2)
+            created, reasoned = finding_events
 
         assert created["type"] == "finding.created"
         assert created["survey_id"] == "survey-1"
@@ -435,3 +445,29 @@ def test_websocket_receives_finding_created_then_reasoned_in_order(tmp_path: Pat
         assert reasoned["survey_id"] == "survey-1"
         assert reasoned["finding"]["what"] == _VALID_RESPONSE["what"]
         assert reasoned["finding"]["recommended_action"] == _VALID_RESPONSE["recommended_action"]
+
+
+def test_a_survey_can_be_started_on_a_path_and_reports_what_it_took_and_skipped(tmp_path: Path) -> None:
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    upload = tmp_path / "upload"
+    _write_fixture_frames(upload, 2)
+    (upload / "report.pdf").write_bytes(b"%PDF")
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+    with TestClient(app) as client:
+        response = client.post("/surveys/survey-1/start", json={"path": str(upload)})
+        assert response.status_code == 200
+        intake = response.json()["intake"]
+        assert [Path(f).name for f in intake["files"]] == ["000.jpg", "001.jpg"]
+        assert [Path(s["path"]).name for s in intake["skipped"]] == ["report.pdf"]
+
+
+def test_starting_on_a_path_that_cannot_be_read_is_a_400_with_the_reason(tmp_path: Path) -> None:
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+    with TestClient(app) as client:
+        response = client.post("/surveys/survey-1/start", json={"path": str(tmp_path / "missing.rar")})
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"]
+        assert client.get("/surveys").json() == []  # nothing half-started

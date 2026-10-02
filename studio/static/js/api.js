@@ -102,3 +102,45 @@ export const listImportedReferences = () => request("/api/import/references");
 export const importedReferenceUrl = (name) => `/api/import/references/${encodeURIComponent(name)}`;
 export const listDocuments = () => request("/api/documents");
 export const documentUrl = (path) => `/api/documents/${path.split("/").map(encodeURIComponent).join("/")}`;
+
+/* ---------- reasoning layers and supervisor review (studio/assistant_routes.py) ---------- */
+
+export const askAssistant = (job, channel, body) =>
+  request(`/api/jobs/${encodeURIComponent(job)}/channels/${channel}/assistant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const surveyBriefing = () => request("/api/assistant/briefing", { method: "POST" });
+
+export const listReviews = (job) => request(`/api/jobs/${encodeURIComponent(job)}/reviews`);
+
+export const decideReview = (job, reviewId, decision) =>
+  request(`/api/jobs/${encodeURIComponent(job)}/reviews/${reviewId}/decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(decision),
+  });
+
+export const reviewsCsvUrl = (job) => `/api/jobs/${encodeURIComponent(job)}/reviews.csv`;
+export const reviewReportUrl = (job, channel) =>
+  `/api/jobs/${encodeURIComponent(job)}/channels/${channel}/review_report.pdf`;
+export const briefingReportUrl = () => "/api/assistant/briefing.pdf";
+
+/* ---------- map and GeoJSON (studio/geo_routes.py) ---------- */
+
+export const vendorGeojson = () => request("/api/geo/vendor.geojson");
+export const georeferencedLines = () => request("/api/geo/lines");
+export const lineGeojson = (job) => request(`/api/jobs/${encodeURIComponent(job)}/geo.geojson`);
+export const getGeoref = (job) => request(`/api/jobs/${encodeURIComponent(job)}/georef`);
+export const saveGeoref = (job, referencePoints) =>
+  request(`/api/jobs/${encodeURIComponent(job)}/georef`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reference_points: referencePoints }),
+  });
+export const lineGeojsonUrl = (job) => `/api/jobs/${encodeURIComponent(job)}/geo.geojson?download=true`;
+export const vendorGeojsonUrl = () => "/api/geo/vendor.geojson?download=true";
+export const allGeojsonUrl = () => "/api/geo/all.geojson";
+export const exportUrl = (format, scope) => `/api/geo/export.${format}?scope=${encodeURIComponent(scope)}`;

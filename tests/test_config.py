@@ -100,12 +100,14 @@ def test_loads_all_fields_from_real_config() -> None:
     assert cfg.reasoning.max_tokens == 1024
     assert cfg.reasoning.timeout_s == 20
     assert cfg.reasoning.strict_json is True
-    assert cfg.reasoning.prompt_version == "v1_finding"
+    assert cfg.reasoning.prompt_version == "v1_candidate"
 
     assert cfg.source.type == "replay"
-    assert cfg.source.replay.directory == ".tmp/replay_fixtures"
-    assert cfg.source.replay.playback_rate_hz == 2.0
+    assert cfg.source.replay.path == ".tmp/replay_fixtures"
+    assert cfg.source.replay.playback_rate_hz == 3.5
     assert cfg.source.replay.step_mode is False
+    assert cfg.source.replay.chunk_traces == 16
+    assert cfg.source.replay.window_traces == 0
     assert cfg.source.edge_gateway.host == "127.0.0.1"
     assert cfg.source.edge_gateway.port == 1883
     assert cfg.source.edge_gateway.protocol == "mqtt"
@@ -225,6 +227,7 @@ def test_a_duplicated_taxonomy_class_name_raises(tmp_path: Path) -> None:
 # near-duplicate tests, and covers every _require/_require_mapping call site
 # individually rather than relying on "the shared function got hit once."
 _REQUIRED_KEY_PATHS: list[tuple[str, ...]] = [
+    ("detection", "backend"),
     ("detection", "weights_path"),
     ("detection", "conf_threshold"),
     ("detection", "iou_threshold"),
@@ -258,7 +261,9 @@ _REQUIRED_KEY_PATHS: list[tuple[str, ...]] = [
     ("reasoning", "prompt_version"),
     ("source", "type"),
     ("source", "replay"),
-    ("source", "replay", "directory"),
+    ("source", "replay", "path"),
+    ("source", "replay", "chunk_traces"),
+    ("source", "replay", "window_traces"),
     ("source", "replay", "playback_rate_hz"),
     ("source", "replay", "step_mode"),
     ("source", "edge_gateway"),

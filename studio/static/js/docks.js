@@ -40,7 +40,7 @@ export function renderTree() {
         class: `tree-job${state.job === job ? " active" : ""}`,
         onclick: () => callbacks.onOpenJob?.(job),
       }, [
-        el("span", { class: "caret", text: expanded ? "▼" : "▶" }),
+        el("span", { class: `caret${expanded ? " open" : ""}`, text: "›" }),
         job,
       ]),
     );
@@ -116,7 +116,39 @@ function showSheet(sheetName) {
   );
 }
 
-/** Accordion headers in the right dock. */
+/* The right dock is an inspector with tabs rather than seven stacked panels: the panels a
+ * person needs together sit on one tab, and the Assistant and Review are one click away
+ * instead of below the fold. The chosen tab is remembered per browser. */
+const TAB_KEY = "gprStudioInspectorTab";
+
+export function showTab(name) {
+  const dock = document.querySelector(".dock-right");
+  if (!dock || !dock.querySelector(`.pane[data-pane="${name}"]`)) return;
+  dock.dataset.tab = name;
+  for (const tab of dock.querySelectorAll(".itab")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+  }
+  try {
+    window.localStorage.setItem(TAB_KEY, name);
+  } catch {
+    /* storage blocked: the tab just is not remembered */
+  }
+}
+
+export function initInspectorTabs() {
+  for (const tab of document.querySelectorAll(".dock-right .itab")) {
+    tab.addEventListener("click", () => showTab(tab.dataset.tab));
+  }
+  let saved = "process";
+  try {
+    saved = window.localStorage.getItem(TAB_KEY) ?? "process";
+  } catch {
+    /* default tab */
+  }
+  showTab(saved);
+}
+
+/** Collapsible section headers (left dock). */
 export function initAccordions() {
   for (const panel of document.querySelectorAll(".panel.accordion")) {
     panel.querySelector(".accordion-head").addEventListener("click", () => {

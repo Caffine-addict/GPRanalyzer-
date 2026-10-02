@@ -18,11 +18,14 @@ from studio import session
 
 _DATASET = Path("Dataset/DSU_GPR_Files")
 needs_dataset = pytest.mark.skipif(not _DATASET.exists(), reason="SPR dataset not present")
+# The constants in simulate/instrument.py were measured on these four delivered lines. Pinned by
+# name: a line imported later (a copy of one of these, say) must not shift the averages checked here.
+_DELIVERED = ("Job_0696", "Job_0703", "Job_0720", "Job_0730")
 
 
 def _real_rad_lines() -> list[np.ndarray]:
     """Every real RAD line as (n_samples, n_traces)."""
-    return [session.load_radargram(session.resolve_job(j, _DATASET), "RAD")[0].astype(float) for j in session.list_jobs(_DATASET)]
+    return [session.load_radargram(session.resolve_job(j, _DATASET), "RAD")[0].astype(float) for j in _DELIVERED]
 
 
 def test_depth_profile_passes_through_its_knots() -> None:
@@ -43,7 +46,7 @@ def test_depth_profile_has_one_value_per_sample() -> None:
 
 @needs_dataset
 def test_line_geometry_matches_the_real_headers() -> None:
-    for job in session.list_jobs(_DATASET):
+    for job in _DELIVERED:
         info = session.describe_channel(session.load_frame(session.resolve_job(job, _DATASET), "RAD"), "RAD")
         assert info.trace_spacing_m == instrument.TRACE_SPACING_M
         assert info.sample_interval_ns == instrument.SAMPLE_INTERVAL_NS

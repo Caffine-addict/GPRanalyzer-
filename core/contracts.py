@@ -40,7 +40,20 @@ class ScanFrame:
     sample_interval_ns: float | None = None
     dielectric_assumed: float | None = None
 
+    # Along-line geometry, for sources that know it. `trace_spacing_m` is the distance between
+    # traces (SPR: the wheel encoder's SPR_SHAFT_INTERVAL). A streaming source sends a line as
+    # overlapping windows: `trace_offset` is the index along the whole line of traces[0], and
+    # `line_complete` is False while more of this line is still to come. The defaults describe
+    # a whole line delivered at once, which is what every file-based frame is.
+    trace_spacing_m: float | None = None
+    trace_offset: int | None = None
+    line_complete: bool = True
+
     def __post_init__(self) -> None:
+        if self.trace_spacing_m is not None and self.trace_spacing_m <= 0:
+            raise ValueError(f"trace_spacing_m must be positive, got {self.trace_spacing_m}")
+        if self.trace_offset is not None and self.trace_offset < 0:
+            raise ValueError(f"trace_offset cannot be negative, got {self.trace_offset}")
         if self.traces is None and self.image is None:
             raise ValueError("ScanFrame requires traces, an image, or both — got neither")
         if self.position is not None and self.position_source is None:
@@ -49,6 +62,25 @@ class ScanFrame:
         # allowed: parsers that have no coordinate at all still record why,
         # e.g. parsers/image.py sets position_source="unknown" with no
         # position — that's a real, honest provenance statement, not a gap.
+
+
+@dataclass(frozen=True)
+class TraceBox:
+    """Where a finding sits on its whole line, in native units: [start, end) traces and samples —
+    or, for an image with no traces, [start, end) pixel columns and rows.
+
+    For drawing a finding over the radargram it came from. Not part of Evidence, which the
+    reasoning layer reads and which never carries pixel or index geometry.
+    """
+
+    trace_start: int
+    trace_end: int
+    sample_start: int
+    sample_end: int
+
+    def __post_init__(self) -> None:
+        if self.trace_end <= self.trace_start or self.sample_end <= self.sample_start:
+            raise ValueError(f"TraceBox must have positive extent, got {self}")
 
 
 @dataclass(frozen=True)
@@ -172,6 +204,8 @@ class Finding:
     how: str | None = None
     recommended_action: str | None = None
     reasoning_latency_ms: float | None = None
+
+    location: TraceBox | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.risk_score <= 1.0:

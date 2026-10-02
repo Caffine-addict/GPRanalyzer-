@@ -36,8 +36,8 @@ from evidence.quality import quality_level
 from reason.engine import GroqClient, ReasoningEngine
 from reason.prompt import build_evidence_block
 from reference import library as reference_library
+from studio import assistant_routes, geo_routes, imports, interpret, render, session, velocity
 from studio import candidates as candidate_store
-from studio import imports, interpret, render, session, velocity
 from studio import palette as palette_module
 from studio import picks as pick_store
 from studio.processing import chain_from_params, is_post_processed, run_chain
@@ -50,9 +50,26 @@ _DISPLAY_KEYS = frozenset({"palette", "contrast", "brightness", "width", "height
 
 app = FastAPI(title="GPR Studio")
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+app.include_router(assistant_routes.router)
+app.include_router(geo_routes.router)
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+@app.middleware("http")
+async def revalidate_the_app(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """The page and its scripts are always checked with the server before reuse.
+
+    Without a Cache-Control header a browser guesses how long to keep each file, and after an
+    update it can run new HTML with an old script module — the app then fails at start-up with
+    empty panels (seen 2026-10-01). "no-cache" still allows the cache; it just revalidates by
+    ETag, so an unchanged file costs a 304, not a download.
+    """
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.middleware("http")

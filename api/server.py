@@ -4,17 +4,19 @@ Source type is chosen from config.yaml at startup — switching from replay to
 a real source later is a config change here, not a code change (see
 sources/factory.py). create_app() is a factory (not a bare module-level
 app) so tests can point it at an isolated test config (temp DB path, fixture
-replay directory) instead of the real one.
+replay path) instead of the real one.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +32,15 @@ import parsers.spr  # noqa: F401 - registers the "rad"/"ra1"/"ra2" parsers as a 
 from api.connection_manager import ConnectionManager
 from api.schemas import finding_to_dict
 from api.survey_manager import SurveyManager
-from core.config import load_config
+from core.config import Config, load_config
 from detect.model import Detector
+from pipeline.classical_detector import ClassicalDetector
+from pipeline.orchestrator import DetectorLike
 from reason.engine import GroqClient, ReasoningEngine
 from reports.generate import generate_report
 from sources.factory import create_source
+from sources.intake import IntakeError
+from sources.replay import ReplaySource
 from store.duckdb_store import DuckDBStore
 
 logger = logging.getLogger(__name__)
@@ -49,6 +55,15 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 class StartSurveyRequest(BaseModel):
     line_id: str = "line_1"
+    # Replay this instead of the configured source: a scan file, a folder, or an archive. The
+    # server reads it from its own disk — this API is local-only by design (see CORS below).
+    path: str | None = None
+
+
+def _build_detector(config: Config) -> DetectorLike:
+    if config.detection.backend == "classical":
+        return ClassicalDetector()
+    return Detector(config.detection)
 
 
 def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
@@ -64,7 +79,7 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
         config = load_config(config_path)
         store = DuckDBStore(config.store.path)
         source = create_source(config.source)
-        detector = Detector(config.detection)
+        detector = _build_detector(config)
 
         api_key = os.environ.get("GROQ_API_KEY")
         reasoning_engine = ReasoningEngine(GroqClient(api_key), config.reasoning) if api_key else None
@@ -81,6 +96,7 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
         )
 
         app.state.store = store
+        app.state.config = config
         app.state.connections = connections
         app.state.survey_manager = survey_manager
 
@@ -195,8 +211,19 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
         # where that call is valid.
         manager: SurveyManager = app.state.survey_manager
         line_id = body.line_id if body is not None else "line_1"
+        source, intake = None, None
+        if body is not None and body.path is not None:
+            config: Config = app.state.config
+            if config.source.type != "replay":
+                raise HTTPException(status_code=400, detail="a path can only be replayed when source.type is replay")
+            source = ReplaySource(replace(config.source.replay, path=body.path))
+            try:
+                # Extracting an archive can take seconds; keep it off the event loop.
+                intake = await asyncio.get_running_loop().run_in_executor(None, source.intake)
+            except IntakeError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
         try:
-            record = manager.start_survey(survey_id, line_id=line_id)
+            record = manager.start_survey(survey_id, line_id=line_id, source=source, intake=intake)
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         return record.to_dict()

@@ -20,6 +20,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pdfplumber>=0.11.10",
     "pypdfium2>=5.13.0",
+    "pyproj>=3.8.0",
+    "ezdxf>=1.4.4",
 ]
 
 [project.optional-dependencies]

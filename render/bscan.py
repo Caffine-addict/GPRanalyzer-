@@ -17,6 +17,8 @@ import logging
 import cv2
 import numpy as np
 
+from core.contracts import ScanFrame
+
 logger = logging.getLogger(__name__)
 
 TARGET_SIZE = 640  # matches the detector's expected input size (Session 3: detect/model.py), not a tunable
@@ -60,3 +62,25 @@ def traces_to_image(traces: np.ndarray) -> np.ndarray:
     # Caught and fixed before any detector was trained on either.
     upright = np.ascontiguousarray(normalised.T)
     return cv2.resize(upright, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_LINEAR)
+
+
+# Display gain for display_strip: amplitudes past this percentile of |background-removed signal|
+# saturate. 99 keeps the strongest reflectors from flattening everything else to mid-grey.
+_DISPLAY_CLIP_PERCENTILE = 99.0
+
+
+def display_strip(frame: ScanFrame) -> np.ndarray:
+    """A frame as a greyscale radargram for a person to look at: (rows=time, cols=distance), uint8.
+
+    For display only — nothing measures off it. Traces get the mean trace subtracted (removes
+    the flat direct-wave band that otherwise hides everything) and a symmetric gain around
+    mid-grey; an image frame is shown as it arrived. Native resolution, unlike traces_to_image,
+    so one column is one trace and a streamed window lines up with its trace_offset exactly.
+    """
+    if frame.traces is None:
+        assert frame.image is not None, "ScanFrame guarantees traces or image"
+        return frame.image
+    signal = np.nan_to_num(frame.traces.astype(np.float64))
+    signal = (signal - signal.mean(axis=0, keepdims=True)).T
+    scale = float(np.percentile(np.abs(signal), _DISPLAY_CLIP_PERCENTILE)) or 1.0
+    return np.clip(128.0 + 127.0 * signal / scale, 0, 255).astype(np.uint8)

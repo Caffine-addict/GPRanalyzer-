@@ -12,12 +12,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from api.schemas import capabilities_to_dict, finding_to_dict
+from api.schemas import capabilities_to_dict, finding_to_dict, frame_to_dict, intake_to_dict
 from core.config import Config
-from core.contracts import Finding, SourceCapabilities
+from core.contracts import Finding, ScanFrame, SourceCapabilities
 from pipeline.orchestrator import DetectorLike, Orchestrator
 from reason.engine import ReasoningEngine
 from sources.base import ScanSource
+from sources.intake import Intake
 from store.base import Store
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class SurveyRecord:
     stopped_at: str | None = None
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
     orchestrator: Orchestrator | None = field(default=None, repr=False)
+    intake: Intake | None = None  # what a path-started survey resolved to; None otherwise
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +52,7 @@ class SurveyRecord:
             "capabilities": capabilities_to_dict(self.capabilities),
             "started_at": self.started_at,
             "stopped_at": self.stopped_at,
+            "intake": None if self.intake is None else intake_to_dict(self.intake),
         }
 
 
@@ -80,7 +83,16 @@ class SurveyManager:
     def get_survey(self, survey_id: str) -> SurveyRecord | None:
         return self._surveys.get(survey_id)
 
-    def start_survey(self, survey_id: str, line_id: str = "line_1") -> SurveyRecord:
+    def start_survey(
+        self,
+        survey_id: str,
+        line_id: str = "line_1",
+        source: ScanSource | None = None,
+        intake: Intake | None = None,
+    ) -> SurveyRecord:
+        """Start a survey on the configured source, or on `source` when one is given (a replay
+        of a path someone supplied — `intake` is what that path resolved to)."""
+        source = source or self._source
         existing = self._surveys.get(survey_id)
         if existing is not None and existing.status == "running":
             raise ValueError(f"survey {survey_id!r} is already running")
@@ -90,8 +102,9 @@ class SurveyManager:
             line_id=line_id,
             status="running",
             source_type=self._source_type,
-            capabilities=self._source.capabilities(),
+            capabilities=source.capabilities(),
             started_at=_now_iso(),
+            intake=intake,
         )
         self._surveys[survey_id] = record
 
@@ -106,8 +119,14 @@ class SurveyManager:
             self._pending_broadcasts.add(task)
             task.add_done_callback(self._pending_broadcasts.discard)
 
+        def emit_frame(frame: ScanFrame) -> None:
+            # Same loop-thread guarantee as emit() above.
+            task = asyncio.create_task(self._broadcast_frame(survey_id, frame))
+            self._pending_broadcasts.add(task)
+            task.add_done_callback(self._pending_broadcasts.discard)
+
         orchestrator = Orchestrator(
-            source=self._source,
+            source=source,
             detector=self._detector,
             store=self._store,
             config=self._config,
@@ -115,6 +134,7 @@ class SurveyManager:
             survey_id=survey_id,
             line_id=line_id,
             reasoning_engine=self._reasoning_engine,
+            emit_frame=emit_frame,
         )
 
         record.orchestrator = orchestrator
@@ -160,6 +180,9 @@ class SurveyManager:
             record.status = "failed"
         finally:
             record.stopped_at = _now_iso()
+
+    async def _broadcast_frame(self, survey_id: str, frame: ScanFrame) -> None:
+        await self._broadcast({"type": "frame.chunk", "survey_id": survey_id, "frame": frame_to_dict(frame)})
 
     async def _broadcast_finding(
         self, survey_id: str, event_type: str, finding_id: int, finding: Finding

@@ -4,13 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPR Studio</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23101318' stroke='%234f9cff' stroke-width='2'/%3E%3Cpath d='M12 12 L20 7' stroke='%234f9cff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/studio.css">
 </head>
 <body>
 
+<!-- Icon sprite: one stroke style, drawn on a 24-unit grid, used everywhere via <use>. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6.5-6.5"/></symbol>
+    <symbol id="i-pan" viewBox="0 0 24 24"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></symbol>
+    <symbol id="i-pick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5"/></symbol>
+    <symbol id="i-hyperbola" viewBox="0 0 24 24"><path d="M3 21c2-9 5-14 9-14s7 5 9 14"/><circle cx="12" cy="7" r="1.6"/></symbol>
+    <symbol id="i-measure" viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-candidates" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M6 15c2-6 4-8 6-8s4 2 6 8"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+  </defs>
+</svg>
+
 <header class="menubar">
-  <div class="brand"><span class="mark"></span>GPR&nbsp;Studio</div>
+  <div class="brand"><svg class="i brand-mark"><use href="#i-radar"/></svg><span>GPR Studio</span></div>
   <nav class="menus">
     <button class="menu" data-menu="file">File</button>
     <button class="menu" data-menu="process">Process</button>
@@ -23,31 +52,29 @@
 </header>
 
 <div class="toolbar">
-  <div class="tool-group" id="toolButtons" role="toolbar" aria-label="Interaction tools">
-    <button class="tool" data-tool="pan"       title="Pan / select (H)"><span class="glyph">✥</span>Pan</button>
-    <button class="tool" data-tool="pick"      title="Mark a target (P)"><span class="glyph">✚</span>Pick</button>
-    <button class="tool" data-tool="hyperbola" title="Fit a hyperbola to measure velocity (V)"><span class="glyph">◠</span>Hyperbola</button>
-    <button class="tool" data-tool="measure"   title="Measure distance and depth (M)"><span class="glyph">↔</span>Measure</button>
+  <div class="seg" id="viewToggle" role="tablist" aria-label="View">
+    <button class="tool active" data-view="radargram" title="Radargram"><svg class="i"><use href="#i-scan"/></svg><span>Radargram</span></button>
+    <button class="tool" data-view="map" title="Map of the survey"><svg class="i"><use href="#i-map"/></svg><span>Map</span></button>
   </div>
-  <div class="tool-sep"></div>
-  <div class="tool-group">
-    <button class="tool icon" id="zoomIn"  title="Zoom in">＋</button>
-    <button class="tool icon" id="zoomOut" title="Zoom out">－</button>
-    <button class="tool icon" id="zoomFit" title="Fit line to window (F)">⤢</button>
+  <div class="seg" id="toolButtons" role="toolbar" aria-label="Interaction tools">
+    <button class="tool" data-tool="pan"       title="Pan and select (H)"><svg class="i"><use href="#i-pan"/></svg><span>Pan</span></button>
+    <button class="tool" data-tool="pick"      title="Mark a target (P)"><svg class="i"><use href="#i-pick"/></svg><span>Pick</span></button>
+    <button class="tool" data-tool="hyperbola" title="Fit a hyperbola to measure velocity (V)"><svg class="i"><use href="#i-hyperbola"/></svg><span>Hyperbola</span></button>
+    <button class="tool" data-tool="measure"   title="Measure distance and depth (M)"><svg class="i"><use href="#i-measure"/></svg><span>Measure</span></button>
   </div>
-  <div class="tool-sep"></div>
-  <div class="tool-group">
-    <button class="tool" id="candidatesToggle" title="Show automatically detected candidate regions and their shape diagnoses"><span class="glyph">▦</span>Candidates</button>
+  <div class="seg">
+    <button class="tool icon" id="zoomIn"  title="Zoom in" aria-label="Zoom in"><svg class="i"><use href="#i-zoom-in"/></svg></button>
+    <button class="tool icon" id="zoomOut" title="Zoom out" aria-label="Zoom out"><svg class="i"><use href="#i-zoom-out"/></svg></button>
+    <button class="tool icon" id="zoomFit" title="Fit line to window (F)" aria-label="Fit line to window"><svg class="i"><use href="#i-fit"/></svg></button>
   </div>
-  <div class="tool-sep"></div>
-  <div class="tool-group" id="channelButtons" aria-label="Channel"></div>
-  <div class="tool-sep"></div>
+  <button class="tool solo" id="candidatesToggle" title="Show automatically detected candidate regions and their shape diagnoses"><svg class="i"><use href="#i-candidates"/></svg><span>Candidates</span></button>
+  <div class="seg" id="channelButtons" aria-label="Channel"></div>
   <label class="inline-field">
-    Palette
+    <span>Palette</span>
     <select id="paletteSelect"></select>
   </label>
-  <label class="inline-field">
-    Contrast
+  <label class="inline-field contrast">
+    <span>Contrast</span>
     <input type="range" id="contrastRange" min="80" max="100" step="0.5" value="98">
     <output id="contrastOut">98</output>
   </label>
@@ -59,31 +86,57 @@
 <main class="workspace">
 
   <aside class="dock dock-left">
-    <section class="panel">
-      <h2>Project</h2>
-      <div class="tree" id="jobTree"><p class="empty">Scanning dataset…</p></div>
+    <section class="panel accordion" data-open="true">
+      <h2 class="accordion-head"><span class="head-title"><svg class="i"><use href="#i-folder"/></svg>Project</span><svg class="i chev"><use href="#i-chevron"/></svg></h2>
+      <div class="accordion-body tree" id="jobTree"><p class="empty">Scanning dataset…</p></div>
     </section>
 
-    <section class="panel docs-panel">
-      <h2>Survey documents <span class="doc-total" id="docCount"></span>
-        <span class="hint" title="Drawings, reports and images found in the dataset folder. Click one to open it in a new tab. They are for reference beside the radargram — Studio does not read radar data from them.">?</span>
+    <section class="panel accordion docs-panel" data-open="true">
+      <h2 class="accordion-head"><span class="head-title"><svg class="i"><use href="#i-file"/></svg>Survey documents <span class="doc-total" id="docCount"></span>
+        <span class="hint" title="Drawings, reports and images found in the dataset folder. Click one to open it in a new tab. They are for reference beside the radargram — Studio does not read radar data from them.">?</span></span>
+        <svg class="i chev"><use href="#i-chevron"/></svg>
       </h2>
-      <div class="doc-tree" id="docTree"><p class="empty">Scanning dataset…</p></div>
+      <div class="accordion-body doc-tree" id="docTree"><p class="empty">Scanning dataset…</p></div>
     </section>
 
-    <section class="panel grow">
-      <h2>Signature library
-        <span class="hint" title="Confirmed hyperbolas cut from signed-off survey deliverables for this same corridor. Click one to compare it against what is on screen.">?</span>
+    <section class="panel accordion grow" data-open="true">
+      <h2 class="accordion-head"><span class="head-title"><svg class="i"><use href="#i-library"/></svg>Signature library
+        <span class="hint" title="Confirmed hyperbolas cut from signed-off survey deliverables for this same corridor. Click one to compare it against what is on screen.">?</span></span>
+        <svg class="i chev"><use href="#i-chevron"/></svg>
       </h2>
-      <p class="panel-note">Confirmed targets from real deliverables — compare against what you are seeing.</p>
-      <div class="signature-grid" id="signatureGrid"></div>
+      <div class="accordion-body library-body">
+        <p class="panel-note">Confirmed targets from real deliverables — compare against what you are seeing.</p>
+        <div class="signature-grid" id="signatureGrid"></div>
+      </div>
     </section>
   </aside>
 
   <section class="viewer">
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="radargram"></canvas>
-      <div class="canvas-empty" id="canvasEmpty">Select a line from the project tree.</div>
+      <div class="canvas-empty" id="canvasEmpty">
+        <div class="welcome">
+          <svg class="i welcome-mark"><use href="#i-radar"/></svg>
+          <h1>Open a radar line to begin</h1>
+          <p>Choose a line from Project on the left, or import a new one.</p>
+          <ol class="welcome-steps">
+            <li><b>Open</b> a line and pick a channel.</li>
+            <li><b>Process</b> it — <i>Process › Standard view</i> is a good start.</li>
+            <li><b>Mark</b> targets, or switch on <i>Candidates</i> to see what the detector found.</li>
+            <li><b>Ask</b> the Assistant; a supervisor confirms or rejects each claim.</li>
+          </ol>
+          <div class="welcome-actions">
+            <button class="btn primary" id="welcomeOpen">Open the first line</button>
+            <button class="btn" id="welcomeImport"><svg class="i"><use href="#i-upload"/></svg>Import files…</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="map-view" id="mapView" hidden>
+      <div id="map"></div>
+      <div class="map-overlay" id="mapOverlay"></div>
+      <div class="map-legend" id="mapLegend"></div>
     </div>
 
     <div class="ascan-strip">
@@ -105,31 +158,41 @@
     </div>
   </section>
 
-  <aside class="dock dock-right">
-    <section class="panel accordion" data-open="true">
-      <h2 class="accordion-head">Processing<span class="chev">▾</span></h2>
-      <div class="accordion-body" id="processingPanel"></div>
-    </section>
+  <aside class="dock dock-right" data-tab="process">
+    <nav class="inspector-tabs" role="tablist" aria-label="Inspector">
+      <button class="itab" role="tab" data-tab="process" title="Processing and velocity"><svg class="i"><use href="#i-sliders"/></svg><span>Process</span></button>
+      <button class="itab" role="tab" data-tab="targets" title="Targets and interpretation"><svg class="i"><use href="#i-target"/></svg><span>Targets</span></button>
+      <button class="itab" role="tab" data-tab="assistant" title="Ask the reasoning assistant"><svg class="i"><use href="#i-sparkle"/></svg><span>Assistant</span></button>
+      <button class="itab" role="tab" data-tab="review" title="Supervisor review of the assistant's claims"><svg class="i"><use href="#i-check"/></svg><span>Review</span><span class="badge" id="reviewBadge" hidden></span></button>
+      <button class="itab" role="tab" data-tab="map" title="Place this line on the map, export GeoJSON"><svg class="i"><use href="#i-map"/></svg><span>Map</span></button>
+      <button class="itab" role="tab" data-tab="info" title="Line information"><svg class="i"><use href="#i-info"/></svg><span>Info</span></button>
+    </nav>
 
-    <section class="panel accordion" data-open="true">
-      <h2 class="accordion-head">Velocity<span class="chev">▾</span></h2>
-      <div class="accordion-body" id="velocityPanel"></div>
-    </section>
+    <div class="pane" data-pane="process">
+      <section class="card"><h2>Processing</h2><div id="processingPanel"></div></section>
+      <section class="card"><h2>Velocity</h2><div id="velocityPanel"></div></section>
+    </div>
 
-    <section class="panel accordion grow" data-open="true">
-      <h2 class="accordion-head">Targets<span class="chev">▾</span></h2>
-      <div class="accordion-body" id="targetsPanel"></div>
-    </section>
+    <div class="pane" data-pane="targets">
+      <section class="card"><h2>Targets</h2><div id="targetsPanel"></div></section>
+      <section class="card"><h2>Interpretation</h2><div id="interpretPanel"></div></section>
+    </div>
 
-    <section class="panel accordion" data-open="true">
-      <h2 class="accordion-head">Interpretation<span class="chev">▾</span></h2>
-      <div class="accordion-body" id="interpretPanel"></div>
-    </section>
+    <div class="pane" data-pane="assistant">
+      <section class="card card-flush"><h2><svg class="i accent"><use href="#i-sparkle"/></svg>Assistant</h2><div id="assistantPanel"></div></section>
+    </div>
 
-    <section class="panel accordion" data-open="false">
-      <h2 class="accordion-head">Line info<span class="chev">▾</span></h2>
-      <div class="accordion-body" id="infoPanel"></div>
-    </section>
+    <div class="pane" data-pane="review">
+      <section class="card card-flush"><h2>Supervisor review</h2><div id="reviewsPanel"></div></section>
+    </div>
+
+    <div class="pane" data-pane="map">
+      <section class="card card-flush"><h2><svg class="i accent"><use href="#i-map"/></svg>Map &amp; GeoJSON</h2><div id="mapPanel"></div></section>
+    </div>
+
+    <div class="pane" data-pane="info">
+      <section class="card"><h2>Line info</h2><div id="infoPanel"></div></section>
+    </div>
   </aside>
 
 </main>
@@ -138,6 +201,7 @@
   <div class="modal" id="modal"></div>
 </div>
 
+<script src="/static/vendor/leaflet/leaflet.js"></script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

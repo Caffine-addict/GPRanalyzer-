@@ -99,16 +99,26 @@ def _extract_depth(
 
 
 def _extract_position(
-    frame: ScanFrame, capabilities: SourceCapabilities
+    detection: Detection,
+    frame: ScanFrame,
+    capabilities: SourceCapabilities,
+    image_shape: tuple[int, ...] | None,
 ) -> tuple[float | None, ConfidenceLevel]:
     # "synthetic"/"unknown" position_source is a placeholder for downstream
     # code, not a real (even approximate) position — reporting it as
     # "estimated" would be fabricating a number, not estimating one.
     if frame.position is None or frame.position_source in {"synthetic", "unknown"}:
         return None, "unavailable"
+    # frame.position is where traces[0] sits. When the trace spacing is known, the detection's
+    # own position is that plus how far along the frame its box centres — otherwise every
+    # finding in a frame would report the frame's start.
+    position = frame.position
+    if frame.trace_spacing_m is not None and frame.traces is not None and image_shape is not None:
+        _rows, cols = box_in_traces(detection.bbox_xyxy, image_shape, frame.traces.shape)
+        position += (cols.start + cols.stop) / 2.0 * frame.trace_spacing_m
     if capabilities.has_real_position:
-        return frame.position, "calibrated"
-    return frame.position, "estimated"
+        return position, "calibrated"
+    return position, "estimated"
 
 
 def _extract_amplitude(
@@ -194,7 +204,7 @@ def extract_evidence(
     `frame.image is None`, exactly as `detect.refine.refine_detections` already requires it.
     """
     depth_m, depth_confidence = _extract_depth(detection, frame, capabilities, config, image_shape)
-    position_m, position_confidence = _extract_position(frame, capabilities)
+    position_m, position_confidence = _extract_position(detection, frame, capabilities, image_shape)
     amplitude, amplitude_confidence = _extract_amplitude(detection, frame, capabilities, image_shape)
 
     return Evidence(

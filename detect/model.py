@@ -18,7 +18,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from core.config import DetectionConfig
-from core.contracts import Detection
+from core.contracts import Detection, ScanFrame
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,8 @@ class Detector:
         )
         return self._model
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: ScanFrame | None = None) -> list[Detection]:
+        """`frame` is accepted for the DetectorLike seam and unused: the weights see pixels only."""
         model = self._load_model()
 
         start = time.monotonic()

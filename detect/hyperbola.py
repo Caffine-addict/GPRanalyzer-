@@ -94,23 +94,71 @@ def extract_ridge_points(
     return np.array(ridge_x, dtype=np.float64), np.array(ridge_t, dtype=np.float64)
 
 
-def fit_hyperbola_ransac(xs: np.ndarray, ts: np.ndarray, seed: int = 0) -> HyperbolaFit | None:
-    """RANSAC + least-squares fit of ridge points to t = sqrt(t0^2 + ((x-x0)/k)^2).
+def _draw_sample_indices(n: int, rng: np.random.Generator) -> np.ndarray:
+    """The RANSAC draws, as `(_RANSAC_ITERATIONS, 3)`.
 
-    Returns None if there aren't enough points, or no fit clears the minimum-inlier bar —
-    both real, reportable outcomes (not an error), meaning "this box's ridge points don't
-    describe a clean hyperbola," which is itself diagnostic information.
-
-    A high r2 is NOT evidence the fit is physically real: it scores agreement with whatever
-    points RANSAC retained, so a tight fit on ten points of surface clutter outscores a
-    genuine target with eighty. Rank fits by permittivity agreement with the site first, then
-    inlier count, and reject apexes past ~90% of the record — see docs/GPR_PATTERN_REFERENCE.md.
+    Deliberately still one `rng.choice` per iteration rather than a single batched draw. The
+    batched call consumes the generator differently and would produce a different sequence,
+    which would change every fit this project has ever reported. The draws are the one part
+    that must stay exactly as it was; the arithmetic over them is what gets vectorised.
     """
-    n = len(xs)
-    if n < 3:
-        return None
-    min_inliers = max(_RANSAC_MIN_INLIERS, int(np.ceil(_RANSAC_MIN_INLIER_FRACTION * n)))
+    idx = np.empty((_RANSAC_ITERATIONS, 3), dtype=np.intp)
+    for i in range(_RANSAC_ITERATIONS):
+        idx[i] = rng.choice(n, size=3, replace=False)
+    return idx
 
+
+def _best_consensus_set(
+    xs: np.ndarray, ts: np.ndarray, n: int, min_inliers: int, seed: int
+) -> np.ndarray | None:
+    """The largest inlier set over all RANSAC draws, or None if none clears `min_inliers`.
+
+    Vectorised over iterations: every candidate model is solved and scored in one batch
+    instead of a Python loop. This is arithmetic reordering only — same draws, same models,
+    same residual test, same tie-break (the earliest of an equal-best count wins, matching
+    the old loop's strictly-greater comparison) — so every fit is bit-identical to the
+    scalar version. `scripts/ransac_adaptive_experiment.py`'s harness checks exactly that.
+
+    Note this is NOT the rejected adaptive-iteration change: the full iteration budget is
+    still spent. Stopping early changes which consensus set is found and therefore the answer
+    (see docs/INCREMENTAL_PROCESSING.md §7); doing the same work faster does not.
+    """
+    idx = _draw_sample_indices(n, np.random.default_rng(seed))
+    xs3 = xs[idx]  # (iterations, 3)
+    ts3_sq = ts[idx] ** 2
+
+    design = np.stack([xs3**2, xs3, np.ones_like(xs3)], axis=2)  # (iterations, 3, 3)
+    try:
+        coef = np.linalg.solve(design, ts3_sq[..., None])[..., 0]
+    except np.linalg.LinAlgError:
+        # A singular design matrix means two sampled traces shared an x, which cannot happen
+        # while ridge points are one-per-column — but a batched solve fails wholesale where
+        # the old loop skipped just that iteration, so fall back rather than lose every fit.
+        return _best_consensus_set_scalar(xs, ts, n, min_inliers, seed)
+
+    c_coef, b_coef, a_coef = coef[:, 0], coef[:, 1], coef[:, 2]
+    usable = c_coef > 1e-9
+    # Guard the divisions so the masked-out rows cannot raise or warn; their scores are
+    # discarded below regardless of what they compute.
+    safe_c = np.where(usable, c_coef, 1.0)
+    k = 1.0 / np.sqrt(safe_c)
+    x0 = -b_coef / (2.0 * safe_c)
+    t0_sq = a_coef - b_coef**2 / (4.0 * safe_c)
+    usable &= t0_sq >= 0.0
+
+    predicted = np.sqrt(np.where(usable, t0_sq, 0.0)[:, None] + ((xs[None, :] - x0[:, None]) / k[:, None]) ** 2)
+    inliers = np.abs(ts[None, :] - predicted) < _RANSAC_RESIDUAL_TOL  # (iterations, n)
+    counts = np.where(usable, inliers.sum(axis=1), -1)
+
+    if not (counts >= min_inliers).any():
+        return None
+    return inliers[int(np.argmax(counts))]  # argmax takes the first maximum — the old tie-break
+
+
+def _best_consensus_set_scalar(
+    xs: np.ndarray, ts: np.ndarray, n: int, min_inliers: int, seed: int
+) -> np.ndarray | None:
+    """The original per-iteration loop, kept as the fallback for a singular design matrix."""
     rng = np.random.default_rng(seed)
     best_inliers: np.ndarray | None = None
     for _ in range(_RANSAC_ITERATIONS):
@@ -134,7 +182,27 @@ def fit_hyperbola_ransac(xs: np.ndarray, ts: np.ndarray, seed: int = 0) -> Hyper
             best_inliers is None or inliers.sum() > best_inliers.sum()
         ):
             best_inliers = inliers
+    return best_inliers
 
+
+def fit_hyperbola_ransac(xs: np.ndarray, ts: np.ndarray, seed: int = 0) -> HyperbolaFit | None:
+    """RANSAC + least-squares fit of ridge points to t = sqrt(t0^2 + ((x-x0)/k)^2).
+
+    Returns None if there aren't enough points, or no fit clears the minimum-inlier bar —
+    both real, reportable outcomes (not an error), meaning "this box's ridge points don't
+    describe a clean hyperbola," which is itself diagnostic information.
+
+    A high r2 is NOT evidence the fit is physically real: it scores agreement with whatever
+    points RANSAC retained, so a tight fit on ten points of surface clutter outscores a
+    genuine target with eighty. Rank fits by permittivity agreement with the site first, then
+    inlier count, and reject apexes past ~90% of the record — see docs/GPR_PATTERN_REFERENCE.md.
+    """
+    n = len(xs)
+    if n < 3:
+        return None
+    min_inliers = max(_RANSAC_MIN_INLIERS, int(np.ceil(_RANSAC_MIN_INLIER_FRACTION * n)))
+
+    best_inliers = _best_consensus_set(xs, ts, n, min_inliers, seed)
     if best_inliers is None:
         return None
 

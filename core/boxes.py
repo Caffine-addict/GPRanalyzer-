@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from core.annotation_io import ANNOTATION_WRITE_LOCK, safe_job_dir, write_text_atomically
+from core.annotation_io import job_lock, safe_job_dir, write_text_atomically
 
 _ANNOTATIONS_ROOT = Path("annotations")
 
@@ -77,10 +77,14 @@ class DetectedBox:
     note: str = ""
 
 
+def _job_dir(job_name: str) -> Path:
+    return safe_job_dir(_ANNOTATIONS_ROOT, job_name)
+
+
 def boxes_path(job_name: str) -> Path:
     """Public so callers can check this file's mtime (e.g. studio/diagnose.py's cache)
     without reaching into this module's storage layout."""
-    return safe_job_dir(_ANNOTATIONS_ROOT, job_name) / "boxes.json"
+    return _job_dir(job_name) / "boxes.json"
 
 
 def load_boxes(job_name: str) -> list[Box]:
@@ -111,7 +115,7 @@ def add_box(job_name: str, *, channel: str, x: float, y: float, w: float, h: flo
             "machine-written boxes, and a detector run deletes boxes carrying it"
         )
     box = Box(id=uuid.uuid4().hex[:8], channel=channel, x=x, y=y, w=w, h=h, note=note)
-    with ANNOTATION_WRITE_LOCK:
+    with job_lock(_job_dir(job_name)):
         _save(job_name, [*load_boxes(job_name), box])
     return box
 
@@ -159,7 +163,7 @@ def replace_detector_boxes(
             raise ValueError(f"box width/height must be positive, got w={box.w} h={box.h}")
 
     run_id = uuid.uuid4().hex[:12]
-    with ANNOTATION_WRITE_LOCK:
+    with job_lock(_job_dir(job_name)):
         kept = [
             b
             for b in load_boxes(job_name)
@@ -185,7 +189,7 @@ def replace_detector_boxes(
 
 
 def delete_box(job_name: str, box_id: str) -> bool:
-    with ANNOTATION_WRITE_LOCK:
+    with job_lock(_job_dir(job_name)):
         boxes = load_boxes(job_name)
         remaining = [b for b in boxes if b.id != box_id]
         if len(remaining) == len(boxes):

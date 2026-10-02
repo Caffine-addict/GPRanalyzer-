@@ -554,3 +554,9 @@ def test_an_unknown_processing_key_on_a_pick_is_refused(client: TestClient, job:
     )
     assert response.status_code == 422
     assert "dewwow" in response.json()["detail"]
+
+
+def test_the_page_and_its_scripts_are_revalidated_not_cached_blindly(client: TestClient) -> None:
+    # A stale cached script module next to new HTML left the app with empty panels.
+    for url in ("/", "/static/js/app.js", "/static/studio.css"):
+        assert client.get(url).headers["cache-control"] == "no-cache"

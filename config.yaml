@@ -2,6 +2,9 @@
 # No defaults live in code — core/config.py fails loudly on anything missing here.
 
 detection:
+  # "classical": background removal + energy envelope + credible hyperbola fit — runs today.
+  # "yolo": the trained detector — needs weights_path to exist (it does not yet).
+  backend: classical
   weights_path: "weights/best.pt"
   conf_threshold: 0.25
   iou_threshold: 0.7
@@ -101,14 +104,20 @@ reasoning:
   max_tokens: 1024
   timeout_s: 20
   strict_json: true
-  prompt_version: v1_finding
+  # v1_candidate while detection.backend is classical — core/config.py enforces the pairing.
+  prompt_version: v1_candidate
 
 source:
   type: replay
   replay:
-    directory: ".tmp/replay_fixtures"
-    playback_rate_hz: 2.0
+    # A scan file, a folder of them, or a .rar/.zip/.7z/.tar archive of them.
+    path: ".tmp/replay_fixtures"
+    # 16-trace chunks at 3.5/s is 56 traces/s: walking pace (1.4 m/s) on the SPR's 0.025 m
+    # wheel-encoder spacing. Frames with no traces (images) are sent whole regardless.
+    playback_rate_hz: 3.5
     step_mode: false
+    chunk_traces: 16
+    window_traces: 0
   edge_gateway:
     host: "127.0.0.1"
     port: 1883

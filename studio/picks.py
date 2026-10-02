@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from core.annotation_io import ANNOTATION_WRITE_LOCK, safe_job_dir, write_text_atomically
+from core.annotation_io import job_lock, safe_job_dir, write_text_atomically
 
 _ANNOTATIONS_ROOT = Path("annotations")
 
@@ -64,8 +64,12 @@ class Pick:
     post_processed: bool | None = None
 
 
+def _job_dir(job_name: str) -> Path:
+    return safe_job_dir(_ANNOTATIONS_ROOT, job_name)
+
+
 def _picks_path(job_name: str) -> Path:
-    return safe_job_dir(_ANNOTATIONS_ROOT, job_name) / "picks.json"
+    return _job_dir(job_name) / "picks.json"
 
 
 def load_picks(job_name: str) -> list[Pick]:
@@ -128,14 +132,14 @@ def add_pick(
         created_at=datetime.now(UTC).isoformat(),
         post_processed=post_processed,
     )
-    with ANNOTATION_WRITE_LOCK:
+    with job_lock(_job_dir(job_name)):
         _save(job_name, [*load_picks(job_name), pick])
     return pick
 
 
 def delete_pick(job_name: str, pick_id: str) -> bool:
     """Remove one pick. False if there was no such pick — the caller decides if that's a 404."""
-    with ANNOTATION_WRITE_LOCK:
+    with job_lock(_job_dir(job_name)):
         picks = load_picks(job_name)
         remaining = [p for p in picks if p.id != pick_id]
         if len(remaining) == len(picks):

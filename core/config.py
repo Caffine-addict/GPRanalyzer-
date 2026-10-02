@@ -23,6 +23,17 @@ def _require(d: dict[str, Any], key: str, path: str) -> Any:
     return d[key]
 
 
+DETECTION_BACKENDS = frozenset({"classical", "yolo"})
+CLASSICAL_PROMPT_VERSION = "v1_candidate"
+
+
+def _non_negative_int(d: dict[str, Any], key: str, path: str) -> int:
+    value = _require(d, key, path)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"{path}.{key} must be a non-negative integer, got {value!r}")
+    return value
+
+
 def _require_mapping(d: dict[str, Any], key: str, path: str) -> dict[str, Any]:
     value = _require(d, key, path)
     if not isinstance(value, dict):
@@ -34,6 +45,7 @@ def _require_mapping(d: dict[str, Any], key: str, path: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class DetectionConfig:
+    backend: str  # "classical" (signal processing, runs today) | "yolo" (needs trained weights)
     weights_path: str
     conf_threshold: float
     iou_threshold: float
@@ -84,9 +96,11 @@ class ReasoningConfig:
 
 @dataclass(frozen=True)
 class ReplaySourceConfig:
-    directory: str
-    playback_rate_hz: float
+    path: str  # a scan file, a folder of them, or an archive of them (sources/intake.py)
+    playback_rate_hz: float  # frames per second; with chunking, chunks per second
     step_mode: bool
+    chunk_traces: int  # stream a traced line this many traces at a time; 0 = whole line per frame
+    window_traces: int  # traces of context sent with each chunk; 0 = the whole line so far
 
 
 @dataclass(frozen=True)
@@ -157,7 +171,11 @@ def _class_names(value: Any, key: str) -> tuple[str, ...]:
 
 
 def _build_detection(d: dict[str, Any]) -> DetectionConfig:
+    backend = _require(d, "backend", "detection")
+    if backend not in DETECTION_BACKENDS:
+        raise ConfigError(f"detection.backend must be one of {sorted(DETECTION_BACKENDS)}, got {backend!r}")
     return DetectionConfig(
+        backend=backend,
         weights_path=_require(d, "weights_path", "detection"),
         conf_threshold=_require(d, "conf_threshold", "detection"),
         iou_threshold=_require(d, "iou_threshold", "detection"),
@@ -255,9 +273,11 @@ def _build_source(d: dict[str, Any]) -> SourceConfig:
     return SourceConfig(
         type=_require(d, "type", "source"),
         replay=ReplaySourceConfig(
-            directory=_require(replay_d, "directory", "source.replay"),
+            path=_require(replay_d, "path", "source.replay"),
             playback_rate_hz=_require(replay_d, "playback_rate_hz", "source.replay"),
             step_mode=_require(replay_d, "step_mode", "source.replay"),
+            chunk_traces=_non_negative_int(replay_d, "chunk_traces", "source.replay"),
+            window_traces=_non_negative_int(replay_d, "window_traces", "source.replay"),
         ),
         edge_gateway=EdgeGatewaySourceConfig(
             host=_require(gateway_d, "host", "source.edge_gateway"),
@@ -299,7 +319,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(f"config file did not parse to a mapping: {p}")
 
-    return Config(
+    config = Config(
         detection=_build_detection(_require_mapping(raw, "detection", "root")),
         enhancement=_build_enhancement(_require_mapping(raw, "enhancement", "root")),
         risk=_build_risk(_require_mapping(raw, "risk", "root")),
@@ -310,3 +330,11 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         store=_build_store(_require_mapping(raw, "store", "root")),
         api=_build_api(_require_mapping(raw, "api", "root")),
     )
+    # The classical backend's confidence is a curve-fit R^2. Only the v1_candidate prompt tells
+    # the model that; any other would present it as a trained detector's confidence.
+    if config.detection.backend == "classical" and config.reasoning.prompt_version != CLASSICAL_PROMPT_VERSION:
+        raise ConfigError(
+            f"detection.backend 'classical' requires reasoning.prompt_version "
+            f"{CLASSICAL_PROMPT_VERSION!r}, got {config.reasoning.prompt_version!r}"
+        )
+    return config

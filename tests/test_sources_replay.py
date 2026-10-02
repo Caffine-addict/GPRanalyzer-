@@ -18,6 +18,7 @@ import parsers.base
 import parsers.image  # registers the image parser as a side effect
 from core.config import ReplaySourceConfig
 from core.contracts import ScanFrame
+from sources.intake import IntakeError
 from sources.replay import ReplaySource
 
 
@@ -32,7 +33,7 @@ def test_replay_frame_count_and_ordering(tmp_path: Path) -> None:
     _write_fixture_frames(tmp_path, names)
 
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
     frames = list(source.frames())
 
@@ -45,7 +46,7 @@ def test_replay_synthesizes_monotonic_synthetic_position(tmp_path: Path) -> None
     _write_fixture_frames(tmp_path, ["a.jpg", "b.jpg", "c.jpg"])
 
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
     frames = list(source.frames())
 
@@ -56,7 +57,7 @@ def test_replay_synthesizes_monotonic_synthetic_position(tmp_path: Path) -> None
 def test_replay_capabilities_are_honest(tmp_path: Path) -> None:
     _write_fixture_frames(tmp_path, ["a.jpg"])
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
     caps = source.capabilities()
 
@@ -69,7 +70,7 @@ def test_replay_capabilities_are_honest(tmp_path: Path) -> None:
 def test_replay_step_mode_true_has_no_delay(tmp_path: Path) -> None:
     _write_fixture_frames(tmp_path, [f"{i:03d}.jpg" for i in range(10)])
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
 
     start = time.monotonic()
@@ -83,7 +84,7 @@ def test_replay_paces_playback_within_tolerance(tmp_path: Path) -> None:
     _write_fixture_frames(tmp_path, [f"{i:03d}.jpg" for i in range(5)])
     rate_hz = 20.0
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=rate_hz, step_mode=False)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=rate_hz, step_mode=False, chunk_traces=0, window_traces=0)
     )
 
     start = time.monotonic()
@@ -96,11 +97,9 @@ def test_replay_paces_playback_within_tolerance(tmp_path: Path) -> None:
 
 def test_replay_missing_directory_raises(tmp_path: Path) -> None:
     source = ReplaySource(
-        ReplaySourceConfig(
-            directory=str(tmp_path / "does_not_exist"), playback_rate_hz=1.0, step_mode=True
-        )
+        ReplaySourceConfig(path=str(tmp_path / "does_not_exist"), playback_rate_hz=1.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
-    with pytest.raises(FileNotFoundError, match="not found"):
+    with pytest.raises(IntakeError, match="not found"):
         list(source.frames())
 
 
@@ -108,9 +107,9 @@ def test_replay_empty_directory_raises(tmp_path: Path) -> None:
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(empty_dir), playback_rate_hz=1.0, step_mode=True)
+        ReplaySourceConfig(path=str(empty_dir), playback_rate_hz=1.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
-    with pytest.raises(FileNotFoundError, match="no supported scan files"):
+    with pytest.raises(IntakeError, match="no supported scan files"):
         list(source.frames())
 
 
@@ -119,7 +118,7 @@ def test_replay_ignores_unsupported_extensions(tmp_path: Path) -> None:
     (tmp_path / "readme.txt").write_text("not a scan")
 
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
     frames = list(source.frames())
     assert len(frames) == 1
@@ -144,7 +143,7 @@ def test_replay_derives_supported_extensions_from_the_parser_registry(
     (tmp_path / "scan.weirdfmt").write_bytes(b"content is irrelevant -- the fake parser ignores it")
 
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
     frames = list(source.frames())
 
@@ -155,7 +154,7 @@ def test_replay_derives_supported_extensions_from_the_parser_registry(
 def test_replay_single_step_via_next(tmp_path: Path) -> None:
     _write_fixture_frames(tmp_path, [f"{i:03d}.jpg" for i in range(3)])
     source = ReplaySource(
-        ReplaySourceConfig(directory=str(tmp_path), playback_rate_hz=1000.0, step_mode=True)
+        ReplaySourceConfig(path=str(tmp_path), playback_rate_hz=1000.0, step_mode=True, chunk_traces=0, window_traces=0)
     )
 
     it = source.frames()

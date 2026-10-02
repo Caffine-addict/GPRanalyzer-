@@ -13,6 +13,11 @@ import * as importDialog from "./import_dialog.js";
 import * as info from "./panel_info.js";
 import * as interact from "./interact.js";
 import * as interpretPanel from "./panel_interpret.js";
+import * as assistantPanel from "./panel_assistant.js";
+import * as reviewsPanel from "./panel_reviews.js";
+import * as assistantActions from "./assistant_ui.js";
+import * as mapPanel from "./panel_map.js";
+import * as mapView from "./map_view.js";
 import * as menus from "./menus.js";
 import * as modal from "./modal.js";
 import * as processing from "./panel_processing.js";
@@ -86,6 +91,8 @@ async function openJob(job) {
     });
     resetView();
     syncLocation();
+    await assistantActions.loadReviews(job);
+    assistantActions.onLineChanged();
   } catch (error) {
     setState({ status: `Could not open ${job}: ${error.message}` });
   }
@@ -107,6 +114,7 @@ function selectChannel(extension) {
   setState({ channel: extension, hyperbola: null, fit: null, ascan: null, measure: null });
   resetView();
   syncLocation();
+  assistantActions.onLineChanged();
 }
 
 function resetView() {
@@ -255,6 +263,7 @@ function selectPick(pick) {
 async function interpretSelected(pick) {
   const state = getState();
   if (!state.job || state.interpreting) return;
+  docks.showTab("targets");
   setState({ interpreting: true, interpretError: null });
   try {
     const interpretation = await api.interpretPick(state.job, pick.id);
@@ -311,6 +320,7 @@ function renderToolbar(state) {
   dom.jobBadge.textContent = state.job
     ? `${state.job} · ${state.channel ?? "—"}`
     : "no line open";
+  dom.jobBadge.classList.toggle("live", Boolean(state.job));
   dom.chainPill.textContent = state.status ?? processing.describeChain(state.processing);
   dom.chainPill.classList.toggle("active", Boolean(state.status));
 }
@@ -368,8 +378,34 @@ function render() {
   velocityPanel.render();
   targets.render();
   interpretPanel.render();
+  assistantPanel.render();
+  reviewsPanel.render();
+  mapPanel.render();
+  renderReviewBadge(state);
   info.render();
   docks.renderTree();
+}
+
+/* Radargram or Map in the middle of the screen. The map hides the radargram and its A-scan
+ * rather than shrinking them, so neither is ever drawn at a misleading scale. */
+function setView(name) {
+  const onMap = name === "map";
+  for (const button of document.querySelectorAll("#viewToggle .tool")) {
+    button.classList.toggle("active", button.dataset.view === name);
+  }
+  document.getElementById("canvasWrap").hidden = onMap;
+  document.querySelector(".ascan-strip").hidden = onMap;
+  mapView.show(onMap);
+  if (onMap) docks.showTab("map");
+  else handleResize();
+}
+
+/* Claims waiting for a supervisor, counted on the Review tab so they are never out of sight. */
+function renderReviewBadge(state) {
+  const badge = document.getElementById("reviewBadge");
+  const waiting = state.reviews.filter((r) => r.status === "proposed").length;
+  badge.hidden = waiting === 0;
+  badge.textContent = waiting > 99 ? "99+" : String(waiting);
 }
 
 function handleResize() {
@@ -446,9 +482,21 @@ async function boot() {
   installMenus();
   docks.init({ onOpenJob: openJob, onSelectChannel: selectChannel });
   docks.initAccordions();
+  docks.initInspectorTabs();
+  mapPanel.init({ onShowMap: () => setView("map") });
+  for (const button of document.querySelectorAll("#viewToggle .tool")) {
+    button.addEventListener("click", () => setView(button.dataset.view));
+  }
+  document.getElementById("welcomeOpen").addEventListener("click", () => {
+    const first = getState().jobs[0];
+    if (first) openJob(first);
+  });
+  document.getElementById("welcomeImport").addEventListener("click", () =>
+    importDialog.open({ onLineImported: afterLineImported }));
   velocityPanel.init({ onVelocityChange: setManualVelocity, onSaveTarget: () => savePick(null) });
   targets.init({ onDelete: deletePick, onSelect: selectPick });
   interpretPanel.init({ onInterpret: interpretSelected });
+  setState({ reviewer: assistantActions.reviewerName() });
   interact.install({
     onPick: (point) => savePick(point),
     onFitRegion: fitRegion,

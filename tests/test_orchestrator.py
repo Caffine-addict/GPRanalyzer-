@@ -47,7 +47,7 @@ def _config(frames_dir: Path):
         cfg,
         source=replace(
             cfg.source,
-            replay=replace(cfg.source.replay, directory=str(frames_dir), step_mode=True),
+            replay=replace(cfg.source.replay, path=str(frames_dir), step_mode=True),
         ),
     )
 
@@ -60,19 +60,19 @@ class _FakeDetector:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         self.call_count += 1
         confidence = 0.5 + self.call_count * 0.01
         return [Detection(class_name="cavities", confidence=confidence, bbox_xyxy=(10.0, 10.0, 50.0, 50.0))]
 
 
 class _EmptyDetector:
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return []
 
 
 class _RaisingDetector:
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         raise ModelNotFoundError("no weights configured")
 
 
@@ -81,7 +81,7 @@ class _MultiClassDetector:
     which should trigger risk/score.py's cavities_with_utility escalation rule.
     """
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return [
             Detection(class_name="cavities", confidence=0.5, bbox_xyxy=(5.0, 5.0, 15.0, 15.0)),
             Detection(
@@ -557,7 +557,7 @@ class _TwoValueEqualDetectionsDetector:
     `!=` (equality) exclusion in the orchestrator's neighbours computation.
     """
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return [
             Detection(class_name="cavities", confidence=0.8, bbox_xyxy=(10.0, 10.0, 50.0, 50.0)),
             Detection(class_name="cavities", confidence=0.8, bbox_xyxy=(10.0, 10.0, 50.0, 50.0)),
@@ -703,7 +703,7 @@ class _ShapeDetector:
     def __init__(self, class_name: str, bbox: tuple[float, float, float, float]) -> None:
         self.class_name, self.bbox = class_name, bbox
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
+    def detect(self, image: np.ndarray, frame: object = None) -> list[Detection]:
         return [Detection(class_name=self.class_name, confidence=0.8, bbox_xyxy=self.bbox)]
 
 
@@ -778,3 +778,33 @@ async def test_a_class_outside_both_shapes_and_taxonomy_never_becomes_a_finding(
         _TracesFrameSource(traces), _ShapeDetector("tractor", bbox), _config(tmp_path / "unused"), tmp_path
     )
     assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_reasoning_calls_in_flight_never_exceed_the_cap(tmp_path: Path) -> None:
+    """A burst of findings must queue for the LLM, not flood it (it did: 429s and dropped calls)."""
+    import threading
+    import types
+
+    from pipeline.orchestrator import MAX_CONCURRENT_REASONING, Orchestrator
+
+    lock = threading.Lock()
+    in_flight = peak = 0
+
+    class _SlowEngine:
+        def reason(self, evidence, risk):  # type: ignore[no-untyped-def]
+            nonlocal in_flight, peak
+            with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            time.sleep(0.05)
+            with lock:
+                in_flight -= 1
+            return None, 50.0
+
+    orchestrator = Orchestrator.__new__(Orchestrator)
+    orchestrator._reasoning_engine = _SlowEngine()  # type: ignore[assignment]
+    orchestrator._reasoning_slots = asyncio.Semaphore(MAX_CONCURRENT_REASONING)
+    finding = types.SimpleNamespace(evidence=None)
+    await asyncio.gather(*(orchestrator._reason_and_emit(i, finding, None) for i in range(8)))  # type: ignore[arg-type]
+    assert peak == MAX_CONCURRENT_REASONING

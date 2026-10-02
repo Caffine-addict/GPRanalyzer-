@@ -9,7 +9,7 @@ from typing import Any
 
 import duckdb
 
-from core.contracts import Evidence, Finding, ScanFrame
+from core.contracts import Evidence, Finding, ScanFrame, TraceBox
 from store.base import Store
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,7 @@ class DuckDBStore(Store):
     def save_finding(self, survey_id: str, line_id: str, frame_id: int, finding: Finding) -> int:
         finding_id = _fetch_scalar(self._conn.execute("SELECT nextval('finding_id_seq')"))
         ev = finding.evidence
+        loc = finding.location
         self._conn.execute(
             """
             INSERT INTO findings (
@@ -101,8 +102,9 @@ class DuckDBStore(Store):
                 amplitude, amplitude_confidence, hyperbola_width_px, neighbours,
                 corroborating_channels,
                 risk_level, risk_score, risk_rules_fired,
-                "what", "where", "why", "how", recommended_action, reasoning_latency_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "what", "where", "why", "how", recommended_action, reasoning_latency_ms,
+                location_trace_start, location_trace_end, location_sample_start, location_sample_end
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 finding_id,
@@ -129,6 +131,10 @@ class DuckDBStore(Store):
                 finding.how,
                 finding.recommended_action,
                 finding.reasoning_latency_ms,
+                None if loc is None else loc.trace_start,
+                None if loc is None else loc.trace_end,
+                None if loc is None else loc.sample_start,
+                None if loc is None else loc.sample_end,
             ],
         )
         return int(finding_id)
@@ -264,4 +270,10 @@ class DuckDBStore(Store):
             how=row["how"],
             recommended_action=row["recommended_action"],
             reasoning_latency_ms=row["reasoning_latency_ms"],
+            location=None
+            if row["location_trace_start"] is None
+            else TraceBox(
+                row["location_trace_start"], row["location_trace_end"],
+                row["location_sample_start"], row["location_sample_end"],
+            ),
         )
