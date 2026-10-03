@@ -32,7 +32,9 @@ Kept current as items close. Written 2026-10-04.
 | Item | Status |
 |---|---|
 | Synthetic training batch (26 scenes) | Running; builds the dataset, checks the cavity rule and trains automatically |
-| Validate apex polarity on real data | Validated on simulation only |
+| Validate apex polarity on real data | Validated on simulation only; Twente cannot test it until detection beats chance |
+| Automatic detection on real data | **At chance** on 71 excavated Twente surveys (docs/EXTERNAL_DATA.md). Needs a detector trained or tuned on real lines; Twente's trench depths plus surveyed line positions would make a proper training/validation set |
+| Automatic velocity on real data | **Worse than guessing** (38.8% vs 23.4% median error). Fitting is sound on a hyperbola an interpreter picks; automatic selection of hyperbolas is not. Keep velocity interpreter-picked until it is fixed |
 | Validate ringing and top/bottom echo rules | Need real metal examples / water-filled pipes |
 | PAS 128 grade on deliverables | Not claimable without ground truth and survey-grade positions |
 | Monitoring and logging for a deployed service | Not built |

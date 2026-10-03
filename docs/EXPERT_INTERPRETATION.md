@@ -21,7 +21,7 @@ Studio now performs, how each was validated, and what still needs real data. Wri
 | Expert check (source) | Studio | Evidence |
 |---|---|---|
 | Target is at the apex; reflection is from the object's top (GSSI) | Measured: candidates, picks and circles sit on the apex | — |
-| Velocity from hyperbola shape, valid only on perpendicular crossings (GSSI) | Measured: RANSAC fit per target; vendor check 7.2 vs 7.3 reported | `studio/velocity.py`, vendor radargrams |
+| Velocity from hyperbola shape, valid only on perpendicular crossings (GSSI) | Measured: RANSAC fit per target; vendor check 7.2 vs 7.3 reported | `studio/velocity.py`, vendor radargrams; Twente 01.1 hand-picked 9.0 vs 9.0. Automatically chosen hyperbolas: worse than guessing (`docs/EXTERNAL_DATA.md`) |
 | Polarity: reversed = rise in permittivity (metal, water); kept = drop (air, and anything less dielectric than the soil) (GSSI, physics) | **Read at the apex** (new) | 8 unique simulated scenes, 40 objects, scored against physics (`scripts/score_polarity_on_simulation.py`): apex right on 27 of 32 it could read, unreadable on 8; the old box-averaged reading was right on 11 of 18, unreadable on 22. Strong-contrast objects (metal, water, voids, slabs, wet ground): 8 of 8 readable right. A small sample, and simulation only. |
 | Brightness: metal bright, empty PVC weak; compare only at equal depth (GSSI) | Relative amplitude per target, in context | — |
 | Usable depth / noise floor (GSSI, Sensors & Software) | **Measured per channel** (new) | Real lines: deep channel reaches noise at ~43% of its record (2.2 m on Job_0703); targets below are not identified |
@@ -47,7 +47,7 @@ recount on unique scenes, scored by the script rather than by eye.
 | Depth calibration from ground truth (GSSI's best method) | One excavated target per site with its measured depth. |
 | Surface-feature context (valves, manholes) | Site photographs or a walkover record per line. |
 | EM locator fusion (PAS 128 QL-B) | EM locator readings over the same lines. |
-| Accuracy figures on real lines | Labelled real lines: the supervisor review record is how they will accumulate. |
+| Accuracy figures on real lines | First real test done on 71 excavated Twente surveys (`docs/EXTERNAL_DATA.md`). Automatic detection and automatic velocity do not beat chance; a hand-picked hyperbola's velocity matches the surveyors' value. More labelled lines will come from the supervisor review record. |
 
 ## How the Studio keeps learning
 
