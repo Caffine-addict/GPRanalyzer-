@@ -6,6 +6,7 @@ reply, and what a supervisor can do with the claims — never what a real model 
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +119,69 @@ def test_field_notes_are_in_the_context_the_model_sees() -> None:
     context = assistant.line_context("Job_1", INFO, [], None)
     assert context["field_notes"] == assistant.FIELD_NOTES
     assert "implied_dielectric" in context["field_notes"]
+
+
+def test_line_context_carries_the_checklist_and_usable_depth() -> None:
+    depth_limit = assistant.usable_depth(TRACES, INFO)
+    context = assistant.line_context("Job_1", INFO, [], None, depth_limit)
+    assert context["interpreter_checklist"] == assistant.INTERPRETER_CHECKLIST
+    assert context["line"]["usable_depth"] == depth_limit
+
+
+def test_usable_depth_cuts_at_the_noise_floor_not_the_record_window() -> None:
+    result = assistant.usable_depth(TRACES, INFO)
+    cut = 31  # TRACES is pure noise at this seed; pinned so a wrong constant is caught, not guessed
+    assert result["usable_depth_m"] == assistant._depth_m(cut, INFO)
+    assert result["usable_fraction_of_record"] == round(cut / INFO.n_samples, 2)
+    assert "noise floor" in result["limit"]
+
+
+def test_usable_depth_falls_back_to_the_record_window_when_signal_never_sinks_into_noise() -> None:
+    # A strong coherent signal across the whole record: nothing sinks to noise, so the window
+    # itself, not a noise floor, is the limit — and there is no usable_fraction_of_record to give.
+    x = np.arange(INFO.n_traces)[:, None]
+    t = np.arange(INFO.n_samples)[None, :]
+    traces = np.sin(x / 7.0) * np.sin(t / 3.0)
+    result = assistant.usable_depth(traces, INFO)
+    assert result == {"usable_depth_m": INFO.max_depth_m,
+                      "limit": "the record's time window — no noise floor found before the record's end"}
+
+
+def test_a_target_exactly_at_the_usable_depth_is_not_counted_below_it() -> None:
+    limit = assistant.usable_depth(TRACES, INFO)["usable_depth_m"]
+    velocity = assistant.SPEED_OF_LIGHT_M_PER_NS / math.sqrt(INFO.dielectric_assumed)
+    sample_at_limit = 2 * limit / (velocity * INFO.sample_interval_ns)
+    (t,) = assistant.line_targets([candidate("a", 100, y=sample_at_limit)], [], INFO, TRACES)
+    assert t["depth_m"] == limit
+    assert t["below_usable_depth"] is False
+
+
+def test_a_target_one_sample_deeper_than_the_usable_depth_is_counted_below_it() -> None:
+    limit = assistant.usable_depth(TRACES, INFO)["usable_depth_m"]
+    velocity = assistant.SPEED_OF_LIGHT_M_PER_NS / math.sqrt(INFO.dielectric_assumed)
+    sample_past_limit = 2 * limit / (velocity * INFO.sample_interval_ns) + 5
+    (t,) = assistant.line_targets([candidate("a", 100, y=sample_past_limit)], [], INFO, TRACES)
+    assert t["depth_m"] > limit
+    assert t["below_usable_depth"] is True
+
+
+def test_polarity_label_matches_the_apex_sign_not_the_opposite() -> None:
+    def wavelet(n: int, at: int, sign: float, width: float = 3.0) -> np.ndarray:
+        t = np.arange(n) - at
+        return sign * (1 - (t / width) ** 2) * np.exp(-0.5 * (t / width) ** 2)
+
+    def scene(echo_sign: float) -> np.ndarray:
+        traces = np.zeros((60, 256))
+        for i in range(60):
+            traces[i] += wavelet(256, 20, 1.0)
+            traces[i] += wavelet(256, int(120 + 0.02 * (i - 30) ** 2), 0.4 * echo_sign)
+        return traces
+
+    info = ChannelInfo(**{**INFO.__dict__, "n_traces": 60, "n_samples": 256})
+    same = assistant._polarity(scene(1.0), 20.0, 114, 20.0, info)
+    reversed_ = assistant._polarity(scene(-1.0), 20.0, 114, 20.0, info)
+    assert same == "same as direct wave"
+    assert reversed_ == "reversed from direct wave"
 
 
 def test_vendor_priors_use_only_text_layer_rows(tmp_path: Path) -> None:

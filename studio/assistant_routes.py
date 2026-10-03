@@ -141,10 +141,11 @@ def ask_about_line(request: Request, job_name: str, extension: str,
     except (session.JobNotFoundError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    targets = assistant.line_targets(candidates, picks, info, traces)
+    depth_limit = assistant.usable_depth(traces, info)  # computed once, used for both the flags and the context
+    targets = assistant.line_targets(candidates, picks, info, traces, depth_limit)
     processed = _processed_dir(request)
     priors = assistant.vendor_priors(processed / "sue_utilities.csv") if processed else None
-    context = assistant.line_context(job_name, info, targets, priors)
+    context = assistant.line_context(job_name, info, targets, priors, depth_limit)
     result = _ask(request, layer, context, targets, question, _history(body))
 
     claims = [{"channel": extension, "target_id": m["target_ref"], "target_kind": m["target_kind"],

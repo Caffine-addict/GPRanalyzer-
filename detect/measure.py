@@ -82,7 +82,8 @@ def permittivity_signal(dielectric: float, site_dielectric: float | None) -> Per
         return PermittivitySignal(
             "air_like",
             f"implied permittivity {dielectric:.2f} is close to air — consistent with a void or an "
-            "air-filled duct on the path to this target",
+            "air-filled duct on the path to this target — or, more often, a line that crossed the "
+            "target at an angle, which widens the hyperbola the same way",
             "cavities",
         )
     if site_dielectric is None:
@@ -93,7 +94,8 @@ def permittivity_signal(dielectric: float, site_dielectric: float | None) -> Per
         return PermittivitySignal(
             "fast",
             f"implied permittivity {dielectric:.1f} is well below the site's {site_dielectric:.1f} — "
-            "drier or more voided ground than the site average on the path to this target",
+            "drier or more voided ground than the site average on the path to this target, or an "
+            "oblique crossing that widens the hyperbola",
             None,
         )
     if dielectric > site_dielectric * 2.0:

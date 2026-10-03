@@ -35,7 +35,7 @@ from typing import Any
 
 import numpy as np
 
-from detect.measure import echo_matches_direct_wave_polarity
+from detect.expert_checks import apex_polarity, penetration_sample
 from reason.engine import LLMClient
 from studio.candidates import Candidate
 from studio.picks import Pick
@@ -115,10 +115,36 @@ FIELD_NOTES = {
     "implied_dielectric": "dielectric of the SOIL above the target, implied by the hyperbola's curvature — "
                           "NOT the object's material. Soils are roughly 4-30; far outside that the fit is "
                           "unreliable (ringing, clutter, or a truncated hyperbola)",
-    "polarity": "first strong echo compared with the direct wave. Validated only for flat-topped echoes "
-                "(voids, layers); on a point reflector it is a weak hint, never enough on its own for material",
+    "polarity": ("the echo at the hyperbola's apex compared with the direct wave, read as interpreters do. "
+                 "On 8 unique simulated scenes (40 objects, scored against physics) it was right on 27 of 32 "
+                 "it could read; strong-contrast objects (metal, water, voids) 8 of 8. A small sample, simulation "
+                 "only, not yet checked on this instrument's real data: trust it on a strong echo, treat it as "
+                 "a hint on a weak one"),
+    "below_usable_depth": "true when the target sits deeper than the line's usable depth (see line), where "
+                          "reflections are at noise level: anything reported there is unreliable",
     "relative_amplitude": "mean echo strength against the median target on this line (1 = typical)",
 }
+
+# The routine checks an experienced locator makes, from the material they are trained on
+# (GSSI "Utility Locating with GPR" handbook MN72-615; NULCA-accredited courses; ASTM D6432).
+# docs/EXPERT_INTERPRETATION.md has the sources and which of these the Studio measures.
+INTERPRETER_CHECKLIST = [
+    "A target sits at the apex of its hyperbola; a reflection always comes from the TOP of the object.",
+    ("Bright, reversed-polarity echo: metal (or water/concrete). Weak echo: plastic — PVC is nearly "
+     "transparent, so what is seen is what is inside it. Same polarity, strong: air (void, empty duct)."),
+    "Brightness is only comparable between targets at the same depth in the same ground; it falls with depth.",
+    "Pipe size cannot be measured for pipes smaller than the antenna spacing (~0.1-0.16 m): they all look alike.",
+    ("A wider-than-expected hyperbola (implied dielectric far below the soil's) most often means the line crossed "
+     "the utility at an angle, not a different material; velocity is only valid on perpendicular crossings."),
+    ("A broken-up hyperbola can be several cables in one conduit. A line running along a utility shows a "
+     "flat layer, not a hyperbola — cross it to confirm."),
+    "Roots and rocks also make hyperbolas: an isolated, short, weak hyperbola that does not repeat is suspect.",
+    ("Two targets closer than about half a wavelength (~0.1 m on the 466 MHz channel) appear as one; "
+     "never promise two parallel lines before seeing them."),
+    "Below the usable depth reflections are noise; report nothing there as found.",
+    ("Which service it is needs outside information: surface features (valves, manholes, chambers), "
+     "as-built drawings, site history, and an EM locator. Say what to check rather than guess."),
+]
 
 METHODS_NOTE = (
     "How material and type are told apart in practice: echo polarity relative to the direct wave "
@@ -138,11 +164,20 @@ def _depth_m(sample: float, info: ChannelInfo) -> float | None:
     return round(velocity * sample * info.sample_interval_ns / 2, 2)
 
 
-def _polarity(traces: np.ndarray, x: float, y: float, w: float, h: float, info: ChannelInfo) -> str:
-    rows = slice(int(y), max(int(y + h), int(y) + 1))
-    cols = slice(int(x), max(int(x + w), int(x) + 1))
-    same = echo_matches_direct_wave_polarity(traces, rows, cols, info.sample_interval_ns)
+def _polarity(traces: np.ndarray, x: float, y: float, w: float, info: ChannelInfo) -> str:
+    """Polarity read at the apex: the box's top centre (detect/expert_checks.py says why)."""
+    same = apex_polarity(traces, x + w / 2, y, info.sample_interval_ns)
     return {True: "same as direct wave", False: "reversed from direct wave", None: "unreadable"}[same]
+
+
+def usable_depth(traces: np.ndarray, info: ChannelInfo) -> dict[str, Any]:
+    """How deep this channel actually sees, from where its reflections sink into noise."""
+    cut = penetration_sample(traces, info.sample_interval_ns)
+    if cut is None:
+        return {"usable_depth_m": info.max_depth_m,
+                "limit": "the record's time window — no noise floor found before the record's end"}
+    return {"usable_depth_m": _depth_m(cut, info), "limit": "noise floor — below this, reflections are not "
+            "distinguishable from noise", "usable_fraction_of_record": round(cut / info.n_samples, 2)}
 
 
 def _amplitude(traces: np.ndarray, x: float, y: float, w: float, h: float) -> float:
@@ -151,7 +186,7 @@ def _amplitude(traces: np.ndarray, x: float, y: float, w: float, h: float) -> fl
 
 
 def line_targets(candidates: list[Candidate], picks: list[Pick], info: ChannelInfo,
-                 traces: np.ndarray) -> list[dict[str, Any]]:
+                 traces: np.ndarray, depth_limit: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Every target on one channel, as the model sees it, with the box a circle will be drawn on.
 
     Depth is from the file header's dielectric ("assumed"), or the pick's own when a person
@@ -179,10 +214,14 @@ def line_targets(candidates: list[Candidate], picks: list[Pick], info: ChannelIn
     typical = statistics.median(amplitudes) if amplitudes else 0.0
     for target, amplitude in zip(raw, amplitudes, strict=True):
         target["position_m"] = round((target["x"] + target["w"] / 2) * info.trace_spacing_m, 2)
-        target["polarity"] = _polarity(traces, target["x"], target["y"], target["w"], target["h"], info)
+        target["polarity"] = _polarity(traces, target["x"], target["y"], target["w"], info)
         target["relative_amplitude"] = round(amplitude / typical, 2) if typical else None
     # Short labels along the line (C1, C2… / P1…): the stored ids are 8-hex hashes a model
     # would garble, and a garbled id is a dropped claim. `ref` keeps the real id.
+    limit = (depth_limit or usable_depth(traces, info))["usable_depth_m"]
+    for target in raw:
+        target["below_usable_depth"] = (None if target["depth_m"] is None or limit is None
+                                        else bool(target["depth_m"] > limit))
     ordered = sorted(raw, key=lambda t: t["position_m"])
     counters = {"candidate": 0, "pick": 0}
     for target in ordered:
@@ -192,16 +231,17 @@ def line_targets(candidates: list[Candidate], picks: list[Pick], info: ChannelIn
 
 
 _SHOWN = ("id", "kind", "position_m", "depth_m", "depth_basis", "shape", "suggested_class", "fit_r2",
-          "implied_dielectric", "polarity", "relative_amplitude")
+          "implied_dielectric", "polarity", "relative_amplitude", "below_usable_depth")
 
 
 def line_context(job: str, info: ChannelInfo, targets: list[dict[str, Any]],
-                 vendor_priors: dict[str, Any] | None) -> dict[str, Any]:
+                 vendor_priors: dict[str, Any] | None, depth_limit: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "line": {"job": job, "channel": info.extension, "channel_label": info.label,
                  "length_m": round(info.line_length_m, 1), "trace_spacing_m": info.trace_spacing_m,
                  "time_window_ns": info.time_window_ns, "header_dielectric": info.dielectric_assumed,
-                 "max_depth_m": info.max_depth_m},
+                 "max_depth_m": info.max_depth_m, "usable_depth": depth_limit},
+        "interpreter_checklist": INTERPRETER_CHECKLIST,
         "field_notes": FIELD_NOTES,
         "targets": [{k: t[k] for k in _SHOWN} for t in targets],
         "vendor_depth_priors": vendor_priors,
