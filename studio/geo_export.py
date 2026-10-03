@@ -28,7 +28,7 @@ _KML_STYLES = {
 }
 _DESCRIBED = ("utility", "depth_m", "depth_basis", "chainage_m", "identity", "material", "confidence", "review_status",
               "reviewer", "origin", "shape", "label", "drawing", "sheet", "position_method", "position_error_m",
-              "uncertainty_radius_m", "status", "read_by")
+              "position_error_note", "uncertainty_radius_m", "status", "read_by")
 
 
 # XML 1.0 forbids these control characters even escaped; one in a pick label or a model's claim

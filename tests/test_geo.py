@@ -130,7 +130,97 @@ def test_holdout_p90_is_the_90th_percentile_not_the_median(monkeypatch: pytest.M
     walked_calls = [10.0] * (anchors_count - 1)  # keeps the path check usable (ratio == 1.0)
     holdout_calls = [float(v) for v in range(1, anchors_count - 1)]  # 1..9, already sorted
     queue = iter(walked_calls + holdout_calls)
+    monkeypatch.setattr(sue_geo, "_drop_misprints", lambda anchors: (anchors, 0))  # distance calls are scripted below
     monkeypatch.setattr(sue_geo, "distance_m", lambda *a, **k: next(queue))
     assessed = sue_geo.assess("Road A.pdf", rows)
     # p90 index = int(0.9 * 8) = 7 -> sorted[7] == 8.0; the mutant's median index = int(0.5 * 8) = 4 -> 5.0
     assert assessed.holdout_p90_m == pytest.approx(8.0)
+
+
+def test_a_misprinted_end_point_is_dropped_and_counted() -> None:
+    # Like Kasturba site-1: the first printed point sits 120 m away for 60 m of chainage.
+    rows = [row(0, *geo.from_local(-60, 0, *ORIGIN))] + [row(c, *east_of_origin(c)) for c in (60, 120, 180, 240)]
+    assessed = sue_geo.assess("Road A.pdf", rows)
+    assert assessed.usable and assessed.dropped == 1 and assessed.anchors[0][0] == 60
+
+
+def test_a_misprinted_interior_point_is_dropped() -> None:
+    rows = [row(c, *east_of_origin(c)) for c in (0, 60, 180, 240)] + [row(120, *geo.from_local(120, 150, *ORIGIN))]  # 162 m away for 60 m
+    assessed = sue_geo.assess("Road A.pdf", rows)
+    assert assessed.dropped == 1 and [a[0] for a in assessed.anchors] == [0, 60, 180, 240]
+
+
+def test_a_real_bend_is_not_mistaken_for_a_misprint() -> None:
+    # A right-angle corner: every step is consistent with its chainage, so nothing is dropped.
+    rows = [row(0, *ORIGIN), row(60, *east_of_origin(60)), row(120, *geo.from_local(60, 60, *ORIGIN)),
+            row(180, *geo.from_local(60, 120, *ORIGIN))]
+    assert sue_geo.assess("Road A.pdf", rows).dropped == 0
+
+
+def test_a_side_without_printed_points_borrows_its_twin_and_gives_no_error_figure() -> None:
+    fc = sue_geo.feature_collection([callout("90", drawing="Road 1065 Rhs.pdf")],
+                                    [{**r, "drawing": "Road 1065 Lhs.pdf"} for r in STRAIGHT])
+    (feature,) = fc["features"]
+    props = feature["properties"]
+    assert props["position_method"] == "interpolated_from_opposite_side_latlong"
+    assert props["position_error_m"] is None and "road width" in props["position_error_note"]
+
+
+def test_a_drawing_with_no_twin_is_still_unplaced() -> None:
+    fc = sue_geo.feature_collection([callout("90", drawing="Other Road.pdf")], STRAIGHT)
+    assert fc["features"] == [] and fc["metadata"]["unplaced"] == {"no printed points on this drawing": 1}
+
+
+def test_opposite_side_covers_every_rhs_lhs_spelling() -> None:
+    assert sue_geo._opposite_side("Road 1065 Rhs.pdf") == "Road 1065 Lhs.pdf"
+    assert sue_geo._opposite_side("Road 1065 Lhs.pdf") == "Road 1065 Rhs.pdf"
+    assert sue_geo._opposite_side("Road 1065 RHS.pdf") == "Road 1065 LHS.pdf"
+    assert sue_geo._opposite_side("Road 1065 LHS.pdf") == "Road 1065 RHS.pdf"
+    assert sue_geo._opposite_side("Road A.pdf") is None
+
+
+def test_a_normal_callout_carries_no_borrowed_error_note() -> None:
+    fc = sue_geo.feature_collection([callout("90")], STRAIGHT)
+    assert fc["features"][0]["properties"]["position_error_note"] is None
+
+
+def test_misprinted_points_dropped_count_reaches_the_feature_collection_metadata() -> None:
+    # Same misprinted-end-point shape as test_a_misprinted_end_point_is_dropped_and_counted,
+    # but checked where callers actually read it: metadata.drawings, not DrawingGeo.dropped.
+    rows = [row(0, *geo.from_local(-60, 0, *ORIGIN))] + [row(c, *east_of_origin(c)) for c in (60, 120, 180, 240)]
+    fc = sue_geo.feature_collection([callout("90")], rows)
+    (drawing_meta,) = fc["metadata"]["drawings"]
+    assert drawing_meta["misprinted_points_dropped"] == 1
+
+
+def test_a_genuine_zigzag_disagreeing_with_both_endpoints_is_not_dropped() -> None:
+    # The middle point disagrees with both neighbours, but the neighbours also disagree with
+    # each other directly -- there's no consistent fallback pair, so this isn't a misprint
+    # (unlike test_a_misprinted_interior_point_is_dropped, where the endpoints DO agree).
+    rows = [row(0, *ORIGIN), row(60, *geo.from_local(60, 500, *ORIGIN)), row(120, *geo.from_local(120, 1000, *ORIGIN))]
+    assessed = sue_geo.assess("Road A.pdf", rows)
+    assert assessed.dropped == 0 and len(assessed.anchors) == 3
+
+
+def test_consistent_is_exactly_true_at_the_misprint_boundary_and_false_just_past_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a, b = (0.0, 0.0, 0.0), (5.0, 0.0, 0.0)  # chainage 5 m apart; the factor clause stays false throughout
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 25.0)  # step - dc == _MISPRINT_M (20) exactly
+    assert sue_geo._consistent(a, b)
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 26.0)  # one metre past it
+    assert not sue_geo._consistent(a, b)
+
+
+def test_consistent_is_exactly_true_at_the_misprint_factor_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    far = (0.0, 0.0, 0.0), (100.0, 0.0, 0.0)  # chainage 100 m apart; the absolute clause stays false throughout
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 200.0)  # step == 2x chainage, exactly at the boundary
+    assert sue_geo._consistent(*far)
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 201.0)
+    assert not sue_geo._consistent(*far)
+
+    near = (0.0, 0.0, 0.0), (200.0, 0.0, 0.0)  # chainage 200 m apart, step a fifth of it
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 100.0)  # chainage == 2x step, the other boundary
+    assert sue_geo._consistent(*near)
+    monkeypatch.setattr(sue_geo, "distance_m", lambda *args, **kwargs: 99.0)
+    assert not sue_geo._consistent(*near)

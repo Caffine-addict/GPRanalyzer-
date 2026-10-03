@@ -29,6 +29,10 @@ from core.geo import distance_m, interpolate
 
 PATH_TOLERANCE = 0.05  # walked length may differ from chainage span by this fraction
 _SAME_POINT_M = 1.0  # printed points closer than this along the chainage are one point
+# A printed point is a misprint when the step to its neighbour disagrees with the chainage between
+# them by more than this many metres AND this factor (Kasturba site-1: first point 124 m away for
+# 58 m of chainage, last 82 m for 10 m, every point between them consistent to a metre or two).
+_MISPRINT_M, _MISPRINT_FACTOR = 20.0, 2.0
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ class DrawingGeo:
     holdout_p90_m: float | None
     usable: bool
     reason: str
+    dropped: int = 0  # printed points discarded as misprints (see _drop_misprints)
 
 
 def _anchors(rows: list[dict[str, str]]) -> list[tuple[float, float, float]]:
@@ -49,6 +54,36 @@ def _anchors(rows: list[dict[str, str]]) -> list[tuple[float, float, float]]:
             continue
         kept.append(point)
     return kept
+
+
+def _consistent(a: tuple[float, float, float], b: tuple[float, float, float]) -> bool:
+    step, dc = distance_m(a[1], a[2], b[1], b[2]), abs(b[0] - a[0])
+    return abs(step - dc) <= _MISPRINT_M or step <= _MISPRINT_FACTOR * dc and dc <= _MISPRINT_FACTOR * step
+
+
+def _drop_misprints(anchors: list[tuple[float, float, float]]) -> tuple[list[tuple[float, float, float]], int]:
+    """Remove isolated printed points that disagree with both neighbours, or an end point with its one.
+
+    An interior point goes only when its neighbours agree with each other without it, so a real
+    bend in the road (both steps long, but consistent end to end) is never mistaken for a misprint.
+    """
+    kept = list(anchors)
+    changed = True
+    while changed and len(kept) > 2:
+        changed = False
+        for i, point in enumerate(kept):
+            if i == 0:
+                bad = not _consistent(point, kept[1]) and _consistent(kept[1], kept[2] if len(kept) > 2 else kept[1])
+            elif i == len(kept) - 1:
+                bad = not _consistent(kept[i - 1], point) and _consistent(kept[i - 2] if i > 1 else kept[i - 1], kept[i - 1])
+            else:
+                bad = (not _consistent(kept[i - 1], point) and not _consistent(point, kept[i + 1])
+                       and _consistent(kept[i - 1], kept[i + 1]))
+            if bad:
+                del kept[i]
+                changed = True
+                break
+    return kept, len(anchors) - len(kept)
 
 
 def _holdout_errors(anchors: list[tuple[float, float, float]]) -> list[float]:
@@ -63,7 +98,7 @@ def _holdout_errors(anchors: list[tuple[float, float, float]]) -> list[float]:
 
 def assess(drawing: str, rows: list[dict[str, str]]) -> DrawingGeo:
     """Whether a drawing's printed points can place its call-outs, and how well."""
-    anchors = _anchors(rows)
+    anchors, dropped = _drop_misprints(_anchors(rows))
     if len(anchors) < 2:
         return DrawingGeo(drawing, anchors, None, None, False, "fewer than two printed points with a chainage")
     walked = sum(distance_m(a[1], a[2], b[1], b[2]) for a, b in pairwise(anchors))
@@ -74,13 +109,21 @@ def assess(drawing: str, rows: list[dict[str, str]]) -> DrawingGeo:
     if ratio is None or abs(ratio - 1) > PATH_TOLERANCE:
         reason = (f"walking the printed points covers {walked:.0f} m for a {span:.0f} m chainage span — "
                   "points off the centre line or out of order")
-        return DrawingGeo(drawing, anchors, ratio, p90, False, reason)
-    return DrawingGeo(drawing, anchors, round(ratio, 3), p90, True, "")
+        return DrawingGeo(drawing, anchors, ratio, p90, False, reason, dropped)
+    return DrawingGeo(drawing, anchors, round(ratio, 3), p90, True, "", dropped)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def _opposite_side(drawing: str) -> str | None:
+    """The same road's other side, by name ("1065 Rhs.pdf" <-> "1065 Lhs.pdf"), or None."""
+    for a, b in (("Rhs", "Lhs"), ("Lhs", "Rhs"), ("RHS", "LHS"), ("LHS", "RHS")):
+        if a in drawing:
+            return drawing.replace(a, b)
+    return None
 
 
 def feature_collection(utilities: list[dict[str, str]], points: list[dict[str, str]]) -> dict[str, Any]:
@@ -98,6 +141,12 @@ def feature_collection(utilities: list[dict[str, str]], points: list[dict[str, s
     unplaced: defaultdict[str, int] = defaultdict(int)
     for row in utilities:
         geo = drawings.get(row["drawing"])
+        # A side printed without Lat/Long borrows its twin's points: both sides share one chainage
+        # (Rajbhavan Road: both run to CH-1065, landmarks at the same chainage). The road width
+        # between them is not printed, so such a position carries no error figure, only a note.
+        borrowed = geo is None and drawings.get(_opposite_side(row["drawing"]) or "") is not None
+        if borrowed:
+            geo = drawings[_opposite_side(row["drawing"]) or ""]
         why = None
         if geo is None:
             why = "no printed points on this drawing"
@@ -126,9 +175,13 @@ def feature_collection(utilities: list[dict[str, str]], points: list[dict[str, s
                 "depth_basis": "vendor-stated, ±30%",
                 "chainage_m": float(row["chainage_m"]),
                 "chainage_source": row.get("chainage_source"),
-                "position_method": "interpolated_from_printed_latlong",
+                "position_method": ("interpolated_from_opposite_side_latlong" if borrowed
+                                    else "interpolated_from_printed_latlong"),
                 "position_confidence": "estimated",
-                "position_error_m": geo.holdout_p90_m,
+                "position_error_m": None if borrowed else geo.holdout_p90_m,
+                "position_error_note": ("placed from the other side of the road's printed points; the road "
+                                        "width between them is not printed, so no error figure is given")
+                                       if borrowed else None,
                 "status": row.get("status"),
                 "read_by": row.get("read_by", "text"),
                 "review_status": None,
@@ -143,7 +196,8 @@ def feature_collection(utilities: list[dict[str, str]], points: list[dict[str, s
                                    "offset, which is not measured",
             "unplaced": dict(unplaced),
             "drawings": [{"drawing": g.drawing, "points": len(g.anchors), "path_ratio": g.path_ratio,
-                          "holdout_p90_m": g.holdout_p90_m, "usable": g.usable, "reason": g.reason}
+                          "holdout_p90_m": g.holdout_p90_m, "usable": g.usable, "reason": g.reason,
+                          "misprinted_points_dropped": g.dropped}
                          for g in drawings.values()],
         },
     }

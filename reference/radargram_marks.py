@@ -164,7 +164,9 @@ def check_velocity(energy: np.ndarray, axes: Axes, circle: tuple[float, float, f
 _CURVE_HALF_WIDTH_M = 0.8
 _MIN_APEX_DEPTH_M = 0.25  # above this the direct wave dominates every column
 _PEAK_SEPARATION_M = 0.5
-_ALONG_CURVE_PERCENTILE = 30  # 50: 12/20 at top 5, 13/20 at top 10; 30: 10/20 and 14/20
+_ALONG_CURVE_PERCENTILE = 30  # 50: 12/20 at top 5, 13/20 at top 10; 30: 10/20 and 14/20.
+# Leave-one-image-out (tune on 6 radargrams, score the 7th; scripts/score_matched_filter_loo.py):
+# still 14/20 at top 10, so that figure is not an artefact of tuning on the targets it is scored on.
 TOP_CANDIDATES = 10  # per image
 
 

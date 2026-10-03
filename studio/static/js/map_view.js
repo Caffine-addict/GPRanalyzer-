@@ -58,7 +58,8 @@ function vendorLayer(features, riskOnly) {
       ["Depth", `${fmt(p.depth_m, 2, " m")} (vendor, ±30%)`],
       ["Chainage", `${fmt(p.chainage_m, 1, " m")} · sheet ${p.sheet}`],
       ["Bore depth", risk ? "could reach it (±30%)" : "clear"],
-      ["Position", `±${fmt(p.position_error_m, 1, " m")} + label offset`],
+      ["Position", p.position_error_m == null ? "from the other side's points; road width not measured"
+        : `±${fmt(p.position_error_m, 1, " m")} + label offset`],
       ["Read by", p.read_by === "ocr" ? "OCR (lower bound)" : "text layer"],
       ["Drawing", p.drawing],
     ], p.marked_pdf ? { href: `${api.documentUrl(p.marked_pdf)}#page=${p.sheet}`, text: "Open the marked drawing at this sheet ↗" } : null));

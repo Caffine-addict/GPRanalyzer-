@@ -217,3 +217,11 @@ def test_download_names_cannot_break_the_header() -> None:
 
     assert _safe_filename('Job"\r\nX-Evil: 1') == "Job___X-Evil__1"
     assert _safe_filename("Job_0730") == "Job_0730" and _safe_filename("") == "export"
+
+
+def test_kml_carries_the_note_when_a_position_has_no_error_figure() -> None:
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [77.59, 12.98]},
+         "properties": {"kind": "vendor_callout", "utility": "UC", "position_error_m": None,
+                        "position_error_note": "road width not printed"}}]}
+    assert "position_error_note: road width not printed" in geo_export.to_kml(fc, "t").decode()
