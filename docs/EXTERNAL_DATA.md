@@ -72,7 +72,25 @@ Two attempts, both failing for the same reason, which is useful to know:
 
 Trench calibration needs stronger detection first.
 
-### What changed, and what each change was worth
+### Layer 1, step 3: independent labels from the survey maps: not precise enough
+
+Training labels must say where each excavated utility crosses each line, without using our own
+picks (a detector trained on its own picks learns its own mistakes). Each survey's
+`survey_map.png` is drawn from the same GNSS tracks and marks the trench as a red dashed arrow, so
+the maps were registered to the tracks (scale and shift, north up): 110 of 122 register, median
+misfit 0.85 px (a few cm). Then the arrow was tested as the trench's position:
+
+- **The arrow's tail is not the trench start.** With the alignment fixed at the tail, picks found
+  16.6% against 15.0% scrambled (better on 9, worse on 13 of 29 surveys).
+- **The arrow is a rough guide.** The best-matching trench start lies within 2.4 m of the tail on
+  17 of 29 surveys, and the arrow's direction agrees with it on 22 of 29.
+- Using it as a constraint (direction fixed, start within ±2.5 m of the tail) left the lift where
+  it was, about 7 points, on the 21 surveys with a usable map, truth and GNSS.
+
+So this dataset does not locate the trench to the ±0.3 m that clean labels need. A detector can
+still be trained on it with labels taken from the best alignment on surveys where that alignment
+is clearly above chance, evaluated only on sites it never saw.
+
 
 1. **Time zero in the hyperbola fit (a physics bug, fixed).** t² = t₀² + (2x/v)² holds for time
    measured from the ground surface. `fit_region` measured it from the start of the record, and on
