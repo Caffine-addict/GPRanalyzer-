@@ -115,6 +115,24 @@ trained on these labels would learn to fire on empty ground, so none was trained
 4. **Stacking arches per survey (`stacked_permittivity`).** One ground, one velocity: the summed
    curves of every clear arch on every line, rather than a median of noisy per-arch answers.
 
+### Detector trained on simulations, tested on Twente (2026-10-04): no transfer
+
+`runs/detect/prod1`: YOLOv8n trained for 100 epochs on 24 gprMax scenes, with simulated instrument
+settings matched to the company's SPR radar. On its own held-out simulated scenes it reaches
+mAP50 0.40, recall 0.30. On the 44 GNSS-mapped Twente surveys, scored like the picker:
+
+| Top 5 picks per line, traced on 3+ lines | Found | Scrambled | Surveys better / worse |
+|---|---|---|---|
+| Migration picker (current) | 18.4% | 11.1% | 28 / 2 (p < 0.0001) |
+| Simulation-trained detector | 3.3% | 2.8% | 7 / 8 (p = 1.0) |
+
+It is at chance on real ground, so it is **not installed** and the picker stays. Part of the gap
+is the instrument: the simulations imitate a ground-coupled SPR radar, and Twente used a 500 MHz
+air-launched one. So this does not prove the model is useless on the company's radar, but nothing
+supports using it either. 24 scenes is also small; simulated clutter is cleaner than real soil.
+The same batch did confirm the cavity rule on simulation: 2 of 2 voids were called cavities, and
+0 of 5 trenches were called cavities wrongly.
+
 ### Tried and rejected, with numbers
 
 - **Global focusing**: migrate the whole line at each velocity and keep the sharpest result.

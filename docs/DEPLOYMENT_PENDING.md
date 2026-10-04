@@ -12,7 +12,7 @@ Kept current as items close. Written 2026-10-04.
 | Secrets | `GROQ_API_KEY` sits in `.env`. | A secret manager, or a local model (the reasoning layer is already behind `LLMClient`). |
 | Data backup | Picks, reviews and placements are JSON files under `annotations/`. | Scheduled backup; reviews are the audit trail and future training labels. |
 | Packaging | Runs from a developer virtualenv. | Container image or installer; confirm Windows if the company PC is Windows. |
-| Model weights | No detector checkpoint is installed. | Install only after validation; set `ULTRALYTICS_SAFE_LOAD` (unrestricted `torch.load` today). |
+| Model weights | No detector checkpoint is installed. The simulation-trained `prod1` model is at chance on real Twente surveys (3.3% vs 2.8% scrambled) and stays uninstalled. | Install only a model that beats the migration picker on real data; set `ULTRALYTICS_SAFE_LOAD` (unrestricted `torch.load` today). |
 | Map tiles | OpenStreetMap tiles are fetched live. | OSM's tile policy forbids heavy use; use a licensed provider or offline tiles. |
 
 ## Needed from the company or the field
