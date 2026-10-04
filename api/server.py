@@ -27,7 +27,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+import parsers.ascii_xta
+import parsers.dzt
 import parsers.image
+import parsers.mala
+import parsers.segy
 import parsers.spr  # noqa: F401 - registers the "rad"/"ra1"/"ra2" parsers as a side effect
 from api.connection_manager import ConnectionManager
 from api.schemas import finding_to_dict

@@ -16,7 +16,9 @@ from pathlib import Path
 
 import numpy as np
 
-from parsers.line import RadarLine
+from core.contracts import ScanFrame
+from parsers.base import register
+from parsers.line import RadarLine, to_scan_frame
 
 _HEADER = 1024
 _UNSIGNED = {8: ("<u1", 128), 16: ("<u2", 32768)}
@@ -48,3 +50,13 @@ def read_dzt(path: Path) -> RadarLine:
     spacing = 1.0 / spm if spm > 0 else None
     distances = np.arange(len(traces)) * spacing if spacing else None
     return RadarLine(traces, time_range / nsamp, spacing, distances)
+
+
+def _dielectric(path: Path) -> float | None:
+    (epsr,) = struct.unpack("<f", Path(path).read_bytes()[54:58])
+    return float(epsr) if 1.0 <= epsr <= 81.0 else None  # the operator's setting; 0 when never set
+
+
+@register("dzt")
+def parse_dzt(path: Path) -> ScanFrame:
+    return to_scan_frame(read_dzt(path), source_type="gssi_dzt", path=Path(path), dielectric=_dielectric(path))

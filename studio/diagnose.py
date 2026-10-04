@@ -93,10 +93,7 @@ def diagnose_job(job_dir: Path, *, force: bool = False) -> list[Diagnosis]:
         if frame is None or frame.traces is None or frame.sample_interval_ns is None:
             continue
         normalized = compute_normalized_envelope(frame.traces, frame.sample_interval_ns)
-        header = frame.provenance.get("raw_header", {})
-        shaft_interval_m = (
-            float(header["SPR_SHAFT_INTERVAL"]) if "SPR_SHAFT_INTERVAL" in header else None
-        )
+        shaft_interval_m = frame.trace_spacing_m
         diagnoses.append(
             diagnose_box(
                 frame.traces,

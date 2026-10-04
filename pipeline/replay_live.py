@@ -23,7 +23,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+import parsers.ascii_xta
+import parsers.dzt
 import parsers.image
+import parsers.mala
+import parsers.segy
 import parsers.spr  # noqa: F401 - registers the SPR parsers as a side effect
 from core.config import load_config
 from core.contracts import Finding

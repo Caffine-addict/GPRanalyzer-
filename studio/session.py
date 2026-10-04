@@ -1,6 +1,7 @@
 """Job discovery, channel loading, and the axis metadata every view needs.
 
-Sits between `parsers/spr.py` and everything in the Studio that wants data.
+Sits between the file readers (`parsers/`: SPR, GSSI, MALÅ, SEG-Y, ASCII exports) and everything in the Studio
+that wants data.
 Two jobs:
 
 **Cache parses.** A survey line is ~386 x 256 samples and parses in about a
@@ -13,11 +14,12 @@ served stale.
 rather than being handed over as bare numbers, because they are not equally
 trustworthy and the difference is not visible from the values:
 
-- Distance is *measured* — `SPR_SHAFT_INTERVAL` is a wheel-encoder reading,
-  0.025 m per trace.
-- Depth is *inferred twice over* — it needs `SPR_SAMPLING_INTERVAL` to be in
-  picoseconds (an inference, `parsers/spr.py`) and the header's operator-set
-  `SPR_MEDIUM_DIELECTRIC` to match the actual ground.
+- Distance is *measured* — a wheel-encoder reading (SPR's `SPR_SHAFT_INTERVAL`, 0.025 m per
+  trace; GSSI scans per metre; MALÅ's distance interval). A line recorded without a wheel has no
+  distance axis and is refused rather than given a guessed one.
+- Depth is *inferred twice over* — it needs the file's sample interval (for SPR, an inference
+  that `SPR_SAMPLING_INTERVAL` is in picoseconds, `parsers/spr.py`) and the operator-set
+  dielectric to match the actual ground.
 
 Anything rendering a depth axis is expected to carry that caveat through to
 what the operator sees. `studio/velocity.py` is the way out of the second
@@ -34,7 +36,12 @@ from pathlib import Path
 
 import numpy as np
 
-import parsers.spr  # noqa: F401 - registers the rad/ra1/ra2 parsers as an import side effect
+# Each reader module registers its file extensions with the parser registry when imported.
+import parsers.ascii_xta
+import parsers.dzt
+import parsers.mala
+import parsers.segy
+import parsers.spr  # noqa: F401 - imported for its registration only
 from core.contracts import ScanFrame
 from parsers.base import get_parser
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS
@@ -44,22 +51,28 @@ DEFAULT_DATASET_DIR = Path("Dataset/DSU_GPR_Files")
 # The three frequency channels an SPRScan 3D writes per line (RAD/RA1/RA2, one antenna), shallow to deep.
 # Ordering is the sampling interval, which is the physical difference between
 # them: a longer interval buys a deeper time window at coarser resolution.
+# Other manufacturers' files hold one channel each and follow them.
 CHANNEL_ORDER: tuple[tuple[str, str], ...] = (
     ("RAD", "Ch 0 — shallow"),
     ("RA1", "Ch 1 — mid"),
     ("RA2", "Ch 2 — deep"),
+    ("DZT", "GSSI"),
+    ("RD3", "MALÅ"),
+    ("RD7", "MALÅ (32-bit)"),
+    ("SGY", "SEG-Y"),
+    ("ASC", "ASCII export"),
 )
 _CHANNEL_LABELS = dict(CHANNEL_ORDER)
 
-DISTANCE_PROVENANCE = "measured (wheel encoder, SPR_SHAFT_INTERVAL)"
+DISTANCE_PROVENANCE = "measured (wheel encoder)"
 DEPTH_PROVENANCE = (
-    "inferred — assumes SPR_SAMPLING_INTERVAL is in picoseconds (unconfirmed) "
-    "and the header's SPR_MEDIUM_DIELECTRIC matches the ground"
+    "inferred — from the file's sample interval (SPR: assumed picoseconds, unconfirmed) "
+    "and the header's dielectric matching the ground"
 )
 
 
 class JobNotFoundError(FileNotFoundError):
-    """No such job folder, or it holds no SPR channel files."""
+    """No such job folder, or it holds no radar channel files."""
 
 
 @dataclass(frozen=True)
@@ -79,7 +92,7 @@ class ChannelInfo:
 
 
 def list_jobs(dataset_dir: Path = DEFAULT_DATASET_DIR) -> list[str]:
-    """Job folder names holding at least one SPR channel file, alphabetically.
+    """Job folder names holding at least one radar channel file, alphabetically.
 
     Re-read on every call rather than cached: a folder dropped into the dataset
     while the server runs should just appear.
@@ -105,10 +118,15 @@ def resolve_job(job_name: str, dataset_dir: Path = DEFAULT_DATASET_DIR) -> Path:
     return dataset_dir / job_name
 
 
-def channel_path(job_dir: Path, extension: str) -> Path:
+def channel_file(job_dir: Path, extension: str) -> Path:
+    """Where a channel's file lives in a job folder, whether or not the job has it."""
     if extension not in _CHANNEL_LABELS:
         raise ValueError(f"unknown channel {extension!r} (have {sorted(_CHANNEL_LABELS)})")
-    path = job_dir / f"Single-01.{extension}"
+    return job_dir / f"Single-01.{extension}"
+
+
+def channel_path(job_dir: Path, extension: str) -> Path:
+    path = channel_file(job_dir, extension)
     if not path.exists():
         raise JobNotFoundError(f"job {job_dir.name} has no {extension} channel")
     return path
@@ -153,13 +171,10 @@ def load_radargram(job_dir: Path, extension: str) -> tuple[np.ndarray, ChannelIn
 
 
 def _trace_spacing_m(frame: ScanFrame) -> float:
-    raw = frame.provenance.get("raw_header", {}).get("SPR_SHAFT_INTERVAL")
-    try:
-        spacing = float(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"channel has no usable SPR_SHAFT_INTERVAL (got {raw!r})") from exc
-    if spacing <= 0:
-        raise ValueError(f"SPR_SHAFT_INTERVAL must be positive, got {spacing}")
+    spacing = frame.trace_spacing_m
+    if spacing is None or spacing <= 0:
+        raise ValueError("this line has no wheel-encoder distance (recorded on time, not distance), "
+                         "so no distance axis can be drawn")
     return spacing
 
 
@@ -198,7 +213,7 @@ def available_channels(job_dir: Path) -> list[ChannelInfo]:
             continue
         infos.append(describe_channel(load_frame(job_dir, extension), extension))
     if not infos:
-        raise JobNotFoundError(f"no SPR channel files in {job_dir}")
+        raise JobNotFoundError(f"no radar channel files in {job_dir}")
     return infos
 
 
@@ -230,4 +245,4 @@ def job_header(job_dir: Path) -> dict[str, str]:
     for extension, _ in CHANNEL_ORDER:
         if (job_dir / f"Single-01.{extension}").exists():
             return dict(load_frame(job_dir, extension).provenance.get("raw_header", {}))
-    raise JobNotFoundError(f"no SPR channel files in {job_dir}")
+    raise JobNotFoundError(f"no radar channel files in {job_dir}")

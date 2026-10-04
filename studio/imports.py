@@ -2,8 +2,9 @@
 
 Two kinds of upload, kept apart because they are different things:
 
-- **A radar line** — a line's `.RAD/.RA1/.RA2` channels, optionally with its `.gps`/`.map`
-  sidecars. It becomes a new job folder that opens like any delivered line. Every channel must
+- **A radar line** — an SPR line's `.RAD/.RA1/.RA2` channels (optionally with `.gps`/`.map`
+  sidecars), or one GSSI `.dzt`, MALÅ `.rd3`/`.rd7` (with its `.rad` header), SEG-Y, or ASCII
+  export (`.asc`: distance, time, amplitude; how IDS and other closed formats get out) file. It becomes a new job folder that opens like any delivered line. Every channel must
   actually parse before anything lands in the dataset, and the whole line is staged and moved in
   with one rename, so the job list never shows a half-written line.
 - **Reference drawings** — deliverable sheets (PDF/DWG/images/archives). Stored and listed, never
@@ -25,10 +26,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from core.annotation_io import safe_job_dir
-from parsers.spr import parse_spr
-from studio.session import list_jobs
+from parsers.base import get_parser
+from studio.session import CHANNEL_ORDER, list_jobs
 
-_CHANNELS = ("RAD", "RA1", "RA2")
+_SPR_CHANNELS = ("RAD", "RA1", "RA2")
+_CHANNELS = tuple(ext for ext, _ in CHANNEL_ORDER)
+_ALIASES = {"SEGY": "SGY"}
+_MALA = ("RD3", "RD7")
 REFERENCE_SUFFIXES = frozenset({".pdf", ".dwg", ".dxf", ".png", ".jpg", ".jpeg", ".rar", ".zip", ".csv"})
 
 # ponytail: uploads are read whole into memory — fine for a local workstation and 300 MB
@@ -41,17 +45,24 @@ def _base_name(client_name: str) -> str:
     return client_name.replace("\\", "/").rsplit("/", 1)[-1].strip()
 
 
-def _line_destination(client_name: str, job_name: str) -> str:
+def _line_destination(client_name: str, job_name: str, mala: str | None) -> str:
+    """`mala` is the MALÅ sample file's extension when the upload has one: a `.rad` then is its
+    header (stored as `Single-01.RD3.rad`, never `Single-01.rad`, which would read as an SPR
+    channel), not an SPR channel."""
     suffix = Path(_base_name(client_name)).suffix[1:]
-    if suffix.upper() in _CHANNELS:
-        return f"Single-01.{suffix.upper()}"
+    if suffix.lower() == "rad" and mala:
+        return f"Single-01.{mala}.rad"
+    channel = _ALIASES.get(suffix.upper(), suffix.upper())
+    if channel in _CHANNELS:
+        return f"Single-01.{channel}"
     if suffix.lower() == "gps":
         return "Single-01.gps"
     if suffix.lower() == "map":
         return f"{job_name}.map"
     raise ValueError(
-        f"{client_name}: not part of a radar line — expected .RAD, .RA1 or .RA2 (plus optional "
-        ".gps/.map). Drawings and reports go in as reference drawings instead."
+        f"{client_name}: not part of a radar line — expected SPR .RAD/.RA1/.RA2 (plus optional "
+        ".gps/.map), GSSI .dzt, MALÅ .rd3/.rd7 with its .rad, SEG-Y .sgy or an ASCII .asc. Drawings and reports "
+        "go in as reference drawings instead."
     )
 
 
@@ -66,16 +77,27 @@ def import_line(dataset_dir: Path, job_name: str, files: Sequence[Upload]) -> li
     if target.exists():
         raise ValueError(f"a job called {job_name!r} already exists — choose another name")
 
+    suffixes = {Path(_base_name(name)).suffix[1:].upper() for name, _ in files}
+    mala = next((ext for ext in _MALA if ext in suffixes), None)
+    if mala is None and any(name.lower().endswith(".rad") and data.lstrip().startswith(b"SAMPLES:") for name, data in files):
+        raise ValueError("that .rad is a MALÅ header — upload it together with its .rd3 or .rd7 sample file")
     staged: dict[str, Upload] = {}
     for client_name, data in files:
-        destination = _line_destination(client_name, job_name)
+        destination = _line_destination(client_name, job_name, mala)
         if destination in staged:
             raise ValueError(f"{staged[destination][0]} and {client_name} both map to {destination}")
         if not data:
             raise ValueError(f"{client_name} is empty")
         staged[destination] = (client_name, data)
-    if not any(name.startswith("Single-01.R") for name in staged):
-        raise ValueError("no radar channel in this upload — a line needs at least one .RAD, .RA1 or .RA2")
+    channels = [name for name in staged if Path(name).suffix[1:] in _CHANNELS]
+    if not channels:
+        raise ValueError("no radar channel in this upload — a line needs an SPR .RAD/.RA1/.RA2, "
+                         "a GSSI .dzt, a MALÅ .rd3/.rd7, a SEG-Y .sgy or an ASCII .asc")
+    if mala and f"Single-01.{mala}.rad" not in staged:
+        raise ValueError(f"the MALÅ .{mala.lower()} file needs its .rad header uploaded with it")
+    if len({Path(name).suffix[1:] in _SPR_CHANNELS for name in channels}) > 1 or (
+            not any(Path(name).suffix[1:] in _SPR_CHANNELS for name in channels) and len(channels) > 1):
+        raise ValueError("one line per upload: an SPR line's channels, or a single file from another radar")
 
     # Staged beside the dataset, not inside it: list_jobs scans the dataset folder, and a
     # staging folder full of channel files would briefly appear there as a job.
@@ -84,13 +106,15 @@ def import_line(dataset_dir: Path, job_name: str, files: Sequence[Upload]) -> li
     try:
         for destination, (_, data) in staged.items():
             (staging / destination).write_bytes(data)
-        for destination, (client_name, _) in staged.items():
-            if destination.startswith("Single-01.R"):
-                try:
-                    parse_spr(staging / destination)
-                # parse_spr raises KeyError for a missing header field, ValueError for a bad one
-                except (ValueError, KeyError) as exc:
-                    raise ValueError(f"{client_name} could not be read as an SPR channel: {exc}") from exc
+        for destination in channels:
+            client_name = staged[destination][0]
+            try:
+                frame = get_parser(staging / destination)(staging / destination)
+            # readers raise KeyError for a missing header field, ValueError for a bad one
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"{client_name} could not be read as a radar line: {exc}") from exc
+            if not frame.trace_spacing_m:
+                raise ValueError(f"{client_name} was recorded without a measuring wheel, so it has no distance axis")
         try:
             staging.rename(target)
         except OSError as exc:

@@ -203,7 +203,7 @@ def test_a_channel_missing_a_required_header_field_is_refused_cleanly(dataset: P
     # parse_spr raises KeyError, not ValueError, for a missing field; that must still come back
     # as a worded refusal rather than a raw server error.
     rad = _line_files()[0][1].replace(b"SPR_SAMPLES_PER_SCAN", b"SPR_XAMPLES_PER_SCAN", 1)
-    with pytest.raises(ValueError, match="could not be read as an SPR channel"):
+    with pytest.raises(ValueError, match="could not be read as a radar line"):
         imports.import_line(dataset, "Job_9201", [("Single-01.RAD", rad)])
     assert not (dataset / "Job_9201").exists()
 
@@ -212,15 +212,15 @@ def test_a_job_created_between_the_check_and_the_move_is_reported_as_taken(
     dataset: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Another import can take the name while this one is still parsing channels.
-    real_parse = imports.parse_spr
+    real_get_parser = imports.get_parser
 
     def parse_then_collide(path: Path):  # type: ignore[no-untyped-def]
-        result = real_parse(path)
+        result = real_get_parser(path)(path)
         (dataset / "Job_9202").mkdir(exist_ok=True)
         (dataset / "Job_9202" / "Single-01.RAD").write_bytes(b"theirs")
         return result
 
-    monkeypatch.setattr(imports, "parse_spr", parse_then_collide)
+    monkeypatch.setattr(imports, "get_parser", lambda path: parse_then_collide)
     with pytest.raises(ValueError, match="already exists"):
         imports.import_line(dataset, "Job_9202", _line_files()[:1])
     assert (dataset / "Job_9202" / "Single-01.RAD").read_bytes() == b"theirs"
@@ -301,3 +301,66 @@ def test_the_documents_endpoints_list_and_open_a_drawing(client: TestClient, dat
     assert served.content == b"%PDF"
     assert served.headers["content-disposition"].startswith("inline")
     assert client.get("/api/documents/Job_9301/Single-01.RAD").status_code == 404
+
+
+# ------------------------------------------------------------- other manufacturers (2026-10-04)
+
+_TU1208 = Path("Dataset/external/tu1208/Database_2018")
+
+
+@pytest.mark.skipif(not _TU1208.exists(), reason="TU1208 dataset not downloaded")
+def test_a_mala_line_imports_with_its_header_and_opens(dataset: Path) -> None:
+    folder = _TU1208 / "SILT"
+    files = [("500MHz_silt_1_rev.rd3", (folder / "500MHz_silt_1_rev.rd3").read_bytes()),
+             ("500MHz_silt_1_rev.rad", (folder / "500MHz_silt_1_rev.rad").read_bytes())]
+    stored = imports.import_line(dataset, "Mala_1", files)
+    assert stored == ["Single-01.RD3", "Single-01.RD3.rad"]  # the header never lands as an SPR .RAD
+    (info,) = session.available_channels(dataset / "Mala_1")
+    assert (info.extension, info.n_traces, info.n_samples) == ("RD3", 1313, 499)
+    assert info.trace_spacing_m == pytest.approx(0.019668)
+
+
+@pytest.mark.skipif(not _TU1208.exists(), reason="TU1208 dataset not downloaded")
+def test_a_line_recorded_without_a_wheel_is_refused_with_the_reason(dataset: Path) -> None:
+    dzt = (_TU1208 / "SILT" / "400MHz_silt_2_rev.dzt").read_bytes()  # 1999 file, scans per metre = 0
+    with pytest.raises(ValueError, match="without a measuring wheel"):
+        imports.import_line(dataset, "Gssi_1", [("line.dzt", dzt)])
+    assert not (dataset / "Gssi_1").exists()
+
+
+def test_a_mala_file_without_its_header_is_refused(dataset: Path) -> None:
+    with pytest.raises(ValueError, match="needs its .rad header"):
+        imports.import_line(dataset, "Mala_2", [("line.rd3", b"\x00\x00" * 8)])
+
+
+def test_two_lines_from_other_radars_in_one_upload_are_refused(dataset: Path) -> None:
+    with pytest.raises(ValueError, match="one line per upload"):
+        imports.import_line(dataset, "Mix_1", [("a.dzt", b"x"), ("b.sgy", b"y")])
+
+
+def _mala_upload(n_traces: int = 40, n_samples: int = 64, interval: float = 0.02) -> list[tuple[str, bytes]]:
+    import numpy as np  # local: only these synthetic MALÅ tests need it
+
+    samples = np.random.default_rng(0).integers(-500, 500, size=(n_traces, n_samples)).astype("<i2").tobytes()
+    header = f"SAMPLES:{n_samples}\r\nFREQUENCY:5000\r\nDISTANCE INTERVAL:{interval}\r\n".encode()
+    return [("line.rd3", samples), ("line.rad", header)]
+
+
+def test_a_synthetic_mala_line_imports_without_touching_the_spr_channel_name(dataset: Path) -> None:
+    stored = imports.import_line(dataset, "Mala_9", _mala_upload())
+    assert stored == ["Single-01.RD3", "Single-01.RD3.rad"]
+    names = {p.name.lower() for p in (dataset / "Mala_9").iterdir()}
+    assert "single-01.rad" not in names  # would read as an SPR channel on a case-insensitive disk
+    (info,) = session.available_channels(dataset / "Mala_9")
+    assert (info.extension, info.n_traces, info.n_samples) == ("RD3", 40, 64)
+
+
+def test_a_synthetic_line_without_a_wheel_is_refused(dataset: Path) -> None:
+    with pytest.raises(ValueError, match="without a measuring wheel"):
+        imports.import_line(dataset, "Mala_10", _mala_upload(interval=0.0))
+    assert not (dataset / "Mala_10").exists()
+
+
+def test_a_mala_header_uploaded_alone_says_what_is_missing(dataset: Path) -> None:
+    with pytest.raises(ValueError, match="MALÅ header"):
+        imports.import_line(dataset, "Mala_11", _mala_upload()[1:])

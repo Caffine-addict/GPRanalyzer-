@@ -54,7 +54,7 @@ def _channels(job_dir: Path) -> dict[str, session.ChannelInfo]:
     Cached per job until a channel file changes: the map asks for every line's length on each
     request, and re-parsing every SPR file each time scales with the number of lines.
     """
-    paths = [(ext, session.channel_path(job_dir, ext)) for ext, _label in session.CHANNEL_ORDER]
+    paths = [(ext, session.channel_file(job_dir, ext)) for ext, _label in session.CHANNEL_ORDER]
     present = [(ext, path) for ext, path in paths if path.exists()]
     # mtime and size: a re-import restoring identical timestamps but different data still misses
     key = tuple(v for _, path in present for v in (path.stat().st_mtime_ns, path.stat().st_size))

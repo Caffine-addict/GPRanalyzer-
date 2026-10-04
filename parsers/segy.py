@@ -25,7 +25,9 @@ from pathlib import Path
 
 import numpy as np
 
-from parsers.line import RadarLine
+from core.contracts import ScanFrame
+from parsers.base import register
+from parsers.line import RadarLine, to_scan_frame
 
 _TEXT, _BINARY, _TRACE_HEADER = 3200, 400, 240
 _MAX_FIELD = 32_767  # samples and interval are signed 16-bit; a swap of a sane value lands above or <= 0
@@ -84,3 +86,8 @@ def _positions(text: bytes, headers: np.ndarray, endian: str, factor: float) -> 
     if np.median(np.linalg.norm(np.diff(xy, axis=0), axis=1)) > _MAX_TRACE_STEP_M:
         return None
     return xy
+
+
+@register("sgy", "segy")
+def parse_segy(path: Path) -> ScanFrame:
+    return to_scan_frame(read_segy(path), source_type="segy_file", path=Path(path))

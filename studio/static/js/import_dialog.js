@@ -9,7 +9,7 @@ import * as documents from "./documents.js";
 import * as modal from "./modal.js";
 import { el, replace } from "./dom.js";
 
-const LINE_EXTENSIONS = [".rad", ".ra1", ".ra2", ".gps", ".map"];
+const LINE_EXTENSIONS = [".rad", ".ra1", ".ra2", ".gps", ".map", ".dzt", ".rd3", ".rd7", ".sgy", ".segy", ".asc"];
 
 function isLineFile(file) {
   const name = file.name.toLowerCase();
@@ -70,7 +70,7 @@ export async function open({ onLineImported }) {
   const importLine = async () => {
     const job = jobInput.value.trim();
     if (!job) return say("Give the line a job name first.", true);
-    if (!pending.length) return say("Choose the line's .RAD / .RA1 / .RA2 files first.", true);
+    if (!pending.length) return say("Choose the line's files first: SPR .RAD/.RA1/.RA2, GSSI .dzt, MALÅ .rd3 + .rad, SEG-Y .sgy, or an ASCII export .asc.", true);
     say("Importing and checking every channel…");
     try {
       await api.importLine(job, pending);
@@ -99,7 +99,7 @@ export async function open({ onLineImported }) {
     el("div", { class: "import-grid" }, [
       el("section", {}, [
         el("h4", { text: "Radar line" }),
-        el("p", { text: "The line's .RAD, .RA1 and .RA2 channels, plus its .gps and .map if you have them. It opens as a new job once every channel reads correctly." }),
+        el("p", { text: "One line: an SPR line's .RAD, .RA1 and .RA2 channels (plus its .gps and .map if you have them), a GSSI .dzt, a MALÅ .rd3 with its .rad header, a SEG-Y .sgy, or an ASCII export (.asc: distance, time, amplitude). It opens as a new job once every file reads correctly." }),
         el("label", { class: "import-label", text: "Job name" }),
         jobInput,
         dropZone("Drop line files here, or click to choose", LINE_EXTENSIONS.join(","), chooseLineFiles),

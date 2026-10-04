@@ -178,7 +178,9 @@ Geophysical Test Site*, Remote Sensing 10(4):530, 2018; data DOI
   There are also polystyrene blocks (voids), a 500 mm concrete pipe, stones, masonry, a steel
   girder and cables.
 - 67 profiles from GSSI (.dzt), MALÅ (.rd3/.rad) and IDS (.dt, plus ASCII) radars at 200-900 MHz.
-  This makes it ideal test data for format readers (`parsers/dzt.py` reads the GSSI files).
+  These are the test files for the format readers: `parsers/dzt.py` (GSSI), `parsers/mala.py`
+  (MALÅ .rd3/.rd7) and `parsers/ascii_xta.py` (the IDS ASCII exports; IDS's own .dt is undocumented and
+  not read directly). All open in the Studio through upload.
 - **Limit:** the paper's figures are schematics. In the 400 MHz silt line-2 profile, two shallow
   pipes drawn 0.5 m apart image about 0.38 m apart, so pipe-by-pipe labels can't be read off the
   figures. An exact survey file exists, but only on request from IFSTTAR, and the project does not
