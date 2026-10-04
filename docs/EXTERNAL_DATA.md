@@ -87,9 +87,16 @@ misfit 0.85 px (a few cm). Then the arrow was tested as the trench's position:
 - Using it as a constraint (direction fixed, start within ±2.5 m of the tail) left the lift where
   it was, about 7 points, on the 21 surveys with a usable map, truth and GNSS.
 
-So this dataset does not locate the trench to the ±0.3 m that clean labels need. A detector can
-still be trained on it with labels taken from the best alignment on surveys where that alignment
-is clearly above chance, evaluated only on sites it never saw.
+So this dataset does not locate the trench to the ±0.3 m that clean labels need. The data paper
+confirms why: "Ground-truth data lacks georeferencing due to confidentiality constraints."
+
+**Self-labelling was tried and stopped before training.** Taking each utility's position from the
+best alignment on the 12 surveys where it is clearly above chance (empirical p ≤ 0.05; sites 01,
+010, 04, 06) gives 123 images and 726 labels. Overlaid on the radargrams, they do not sit on the
+hyperbolas. On 01.1, visible arches are about 0.2-0.3 m shallower than their labels, and several
+labels fall below any visible signal. The stacked uncertainties are the trench start (about 2 m),
+the drawing's depth reference (top, centre or bottom of pipe), and the soil velocity. A detector
+trained on these labels would learn to fire on empty ground, so none was trained.
 
 
 1. **Time zero in the hyperbola fit (a physics bug, fixed).** t² = t₀² + (2x/v)² holds for time
