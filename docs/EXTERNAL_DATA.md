@@ -206,6 +206,21 @@ it. Chance is the same picks at random positions.
 | RAD (shallow) | **10/23 (43%)**, chance 14% | 8/23 (35%), chance 16% |
 | RA2 (deep) | 4/23 (17%), chance 9% | 0/23 |
 
+**Merged across channels** (`detect/channel_fusion.py`). Each channel has its own time zero
+(direct wave at about 1.6, 4.2 and 6.4 ns on RAD, RA1 and RA2). Measured from it, one target lines
+up across channels to a median 0.8 ns. Picks at one position and time on several channels become
+one target (every member within tolerance of every other, so no chaining), and corroborated
+targets rank first. Time zero is the median of each trace's direct-wave arrival. Counted per location an operator checks:
+
+| Locations checked per line | Channels kept separate | Merged, corroborated first |
+|---|---|---|
+| 3 | 9/23 (39%), chance 7% | **14/23 (61%)**, chance 13% |
+| 5 | 10/23 (43%), chance 8% | **14/23 (61%)**, chance 19% |
+| 10 | 13/23 (57%), chance 17% | **17/23 (74%)**, chance 30% |
+
+When a tag is found, the pick lies a median 5 cm from it along the line and about 0.8 ns
+(roughly 4 cm of depth at permittivity 9) from it in time.
+
 So the Studio now generates its candidates with the migration picker
 (`studio/candidates.ensure_candidates`), on first opening a line. Imported lines previously had
 no candidates at all, because the energy-envelope boxes came from an offline script. Tags are used

@@ -26,13 +26,14 @@ import numpy as np
 
 from core import boxes as box_store
 from core.annotation_io import job_lock, write_text_atomically
+from detect.channel_fusion import ChannelPicks, fuse, time_zero_ns
 from detect.migration_picker import pick_targets
 from studio import session
 from studio.diagnose import diagnose_job
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 
 MIGRATION_DETECTOR = "migration-picker"
-MIGRATION_DETECTOR_VERSION = "1"
+MIGRATION_DETECTOR_VERSION = "2"  # 2: picks merged across channels (corroboration)
 _BOX_ABOVE_NS, _BOX_BELOW_NS = 1.0, 3.0
 _MIN_HALF_WIDTH_M, _MAX_HALF_WIDTH_M = 0.2, 1.5
 _DEFAULT_DIELECTRIC = 9.0
@@ -66,6 +67,7 @@ class Candidate:
     rationale: str | None
     fit_r2: float | None
     implied_dielectric: float | None
+    corroboration: int | None = None  # channels that saw this target; more is likelier real
 
 
 def generate_candidates(job_name: str, job_dir: Path) -> list[box_store.Box]:
@@ -75,27 +77,46 @@ def generate_candidates(job_name: str, job_dir: Path) -> list[box_store.Box]:
     hyperbola itself at the migration velocity. A channel that cannot be picked is logged and
     skipped; the others still get their boxes.
     """
-    found, failed = [], []
+    failed: list[str] = []
+    per_channel = {}
     for info in session.available_channels(job_dir):
         frame = session.load_frame(job_dir, info.extension)
-        dt, spacing = info.sample_interval_ns, info.trace_spacing_m
+        traces = session.raw_traces(frame)
         dielectric = frame.dielectric_assumed or _DEFAULT_DIELECTRIC
-        velocity = SPEED_OF_LIGHT_M_PER_NS / float(np.sqrt(dielectric))
         try:
-            picks = pick_targets(session.raw_traces(frame), sample_interval_ns=dt, trace_spacing_m=spacing,
-                                 dielectric=dielectric)
+            picks = pick_targets(traces, sample_interval_ns=info.sample_interval_ns,
+                                 trace_spacing_m=info.trace_spacing_m, dielectric=dielectric)
         except ValueError as exc:
             logger.warning("migration picker skipped %s %s: %s", job_name, info.extension, exc)
             failed.append(info.extension)
             continue
-        for pick in picks:
+        per_channel[info.extension] = (info, dielectric, ChannelPicks(
+            picks, info.sample_interval_ns, time_zero_ns(traces, info.sample_interval_ns)))
+
+    # Channels of one line share position and (from each channel's own time zero) time, so a
+    # target seen on several of them is likelier real. Lines from other radars have one channel.
+    seen_on = {}
+    spacings = {info.trace_spacing_m for info, _, _ in per_channel.values()}
+    if len(per_channel) > 1 and len(spacings) == 1:
+        for target in fuse({name: ch for name, (_, _, ch) in per_channel.items()}, spacings.pop()):
+            for name, pick in target.members:
+                seen_on[(name, pick.trace, pick.sample)] = len(target.channels)
+
+    found = []
+    for name, (info, dielectric, channel) in per_channel.items():
+        dt, spacing = info.sample_interval_ns, info.trace_spacing_m
+        velocity = SPEED_OF_LIGHT_M_PER_NS / float(np.sqrt(dielectric))
+        for pick in channel.picks:
             half = hyperbola_half_width_m(pick.sample * dt, velocity) / spacing
             x0, x1 = max(0.0, pick.trace - half), min(info.n_traces - 1.0, pick.trace + half)
             y0 = max(0.0, pick.sample - _BOX_ABOVE_NS / dt)
             y1 = min(info.n_samples - 1.0, pick.sample + _BOX_BELOW_NS / dt)
+            corroboration = seen_on.get((name, pick.trace, pick.sample))
+            seen = f"; seen on {corroboration} channels" if corroboration and corroboration > 1 else ""
             if x1 > x0 and y1 > y0:
-                found.append(box_store.DetectedBox(channel=info.extension, x=x0, y=y0, w=x1 - x0, h=y1 - y0,
-                                                   note=f"auto: migration focus, {pick.strength:.1f}x background"))
+                found.append(box_store.DetectedBox(channel=name, x=x0, y=y0, w=x1 - x0, h=y1 - y0,
+                                                   note=f"auto: migration focus, {pick.strength:.1f}x background{seen}",
+                                                   corroboration=corroboration))
     boxes = box_store.replace_detector_boxes(job_name, detector=MIGRATION_DETECTOR,
                                              detector_version=MIGRATION_DETECTOR_VERSION, boxes=found)
     write_text_atomically(box_store.boxes_path(job_name).parent / _MARKER, json.dumps(
@@ -156,6 +177,7 @@ def load_candidates(job_name: str, job_dir: Path) -> list[Candidate]:
                 rationale=diagnosis.rationale if diagnosis else None,
                 fit_r2=diagnosis.fit_r2 if diagnosis else None,
                 implied_dielectric=diagnosis.implied_dielectric if diagnosis else None,
+                corroboration=raw.get("corroboration"),
             )
         )
     return candidates

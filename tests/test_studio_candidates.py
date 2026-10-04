@@ -158,3 +158,17 @@ def test_deeper_targets_get_wider_boxes() -> None:
     deep = candidates.hyperbola_half_width_m(apex_ns=20.0, velocity_m_per_ns=0.1)
     assert shallow < deep
     assert deep == pytest.approx(0.5 * 0.1 * ((23.0**2 - 20.0**2) ** 0.5))  # where the limb is 3 ns below the apex
+
+
+_REAL_SPR = Path("Dataset/DSU_GPR_Files/Job_0703")
+
+
+@pytest.mark.skipif(not _REAL_SPR.exists(), reason="SPR dataset not present")
+def test_three_channel_candidates_carry_their_corroboration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    job_dir = _REAL_SPR.resolve()  # before leaving the repository
+    monkeypatch.chdir(tmp_path)
+    candidates.generate_candidates("Job_0703", job_dir)
+    boxes = candidates.box_store.load_boxes("Job_0703")
+    assert {b.channel for b in boxes} == {"RAD", "RA1", "RA2"}
+    assert all(b.corroboration in (1, 2, 3) for b in boxes)
+    assert any(b.corroboration and b.corroboration >= 2 for b in boxes)  # the same targets show on several channels

@@ -63,6 +63,9 @@ class Box:
     detector_version: str | None = None
     # Which run wrote it. Lets a reader tell "found twice by two runs" from "found once".
     run_id: str | None = None
+    # How many of the line's frequency channels saw this target (detect/channel_fusion.py).
+    # None when the detector does not merge channels, or for a box a person drew.
+    corroboration: int | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,7 @@ class DetectedBox:
     w: float
     h: float
     note: str = ""
+    corroboration: int | None = None
 
 
 def _job_dir(job_name: str) -> Path:
@@ -181,6 +185,7 @@ def replace_detector_boxes(
                 detector=detector,
                 detector_version=detector_version,
                 run_id=run_id,
+                corroboration=b.corroboration,
             )
             for b in boxes
         ]

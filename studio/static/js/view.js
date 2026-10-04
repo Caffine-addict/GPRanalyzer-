@@ -300,10 +300,13 @@ function drawCrosshair(state, plot) {
 function drawCandidates(state, channel) {
   if (!state.showCandidates) return;
   ctx.save();
-  ctx.lineWidth = 1;
-  ctx.setLineDash([3, 2]);
   for (const candidate of state.candidates) {
     if (candidate.channel !== channel.extension) continue;
+    // Seen on two or more of the line's channels: likelier a real target, so drawn solid and
+    // heavier. Single-channel candidates stay dashed.
+    const corroborated = (candidate.corroboration ?? 1) >= 2;
+    ctx.lineWidth = corroborated ? 2 : 1;
+    ctx.setLineDash(corroborated ? [] : [3, 2]);
     const topLeft = dataToScreen(state.view, candidate.x, candidate.y);
     const bottomRight = dataToScreen(state.view, candidate.x + candidate.w, candidate.y + candidate.h);
     ctx.strokeStyle = candidate.suggested_class
