@@ -164,7 +164,7 @@ Before these changes, 71 surveys: detector 29.4% against a control of 32.4%; mig
 62.6% against 64.9%; velocity median error 38.8% against 23.4% for guessing (11 of 37 within 25%).
 Those controls are the biased version described above.
 
-## IFSTTAR test site (TU1208, Nantes): downloaded; exact positions on request
+## IFSTTAR test site (TU1208, Nantes): downloaded; used for format readers
 
 X. Dérobert and L. Pajewski, *TU1208 Open Database of Radargrams: The Dataset of the IFSTTAR
 Geophysical Test Site*, Remote Sensing 10(4):530, 2018; data DOI
@@ -181,9 +181,9 @@ Geophysical Test Site*, Remote Sensing 10(4):530, 2018; data DOI
   This makes it ideal test data for format readers (`parsers/dzt.py` reads the GSSI files).
 - **Limit:** the paper's figures are schematics. In the 400 MHz silt line-2 profile, two shallow
   pipes drawn 0.5 m apart image about 0.38 m apart, so pipe-by-pipe labels can't be read off the
-  figures. The paper offers "a complete topographical file describing ... the position of each
-  buried object" on request from IFSTTAR. That file would turn this into an exact benchmark for
-  depth, velocity and steel vs water-filled vs empty plastic pipe.
+  figures. An exact survey file exists, but only on request from IFSTTAR, and the project does not
+  depend on outside requests. Only the public files are used: as test data for the radar-format
+  readers, and as a qualitative check, since the pipes are visible and one rings like steel.
 
 
 
