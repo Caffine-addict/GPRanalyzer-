@@ -34,6 +34,7 @@ Kept current as items close. Written 2026-10-04.
 | Synthetic training batch (26 scenes) | Running; builds the dataset, checks the cavity rule and trains automatically |
 | Validate apex polarity on real data | Validated on simulation only; Twente cannot test it until detection beats chance |
 | Automatic detection on real data | **Beats chance on the GNSS map**: 17.4% vs 10.3% scrambled, better on 22 and worse on 4 of 39 surveys (p = 0.0005), but still misses most utilities. Next: train the detector on Twente's excavated utilities (Layer 1 step 3) |
+| Training from supervisor reviews | Built: `python -m studio.training_export --out datasets/reviewed` turns confirmed reviews and picks into labelled tiles, rejections into hard negatives, with who decided what in `manifest.jsonl`. Nothing to export yet: no reviews have been made. Retrain and re-run the Twente/real-data comparison once a few hundred decisions exist |
 | Automatic velocity on real data | Improved: 21.9% median error vs 23.4% for guessing (was 38.8%). Still reads wet soils (ε 13-19.5) as ~9-11. Next: wire `stacked_permittivity` into the Studio as a whole-line velocity suggestion, labelled as an estimate; validate wet-soil readings against trench depths |
 | Validate ringing and top/bottom echo rules | Need real metal examples / water-filled pipes |
 | PAS 128 grade on deliverables | Not claimable without ground truth and survey-grade positions |
