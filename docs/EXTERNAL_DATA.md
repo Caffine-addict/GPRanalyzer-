@@ -187,7 +187,31 @@ Geophysical Test Site*, Remote Sensing 10(4):530, 2018; data DOI
   depend on outside requests. Only the public files are used: as test data for the radar-format
   readers, and as a qualitative check, since the pipes are visible and one rings like steel.
 
+## Company SPRScan lines with operator tags (received 2026-10-04)
 
+56 SPRScan lines in five sets, from the company's own radar, kept under `Dataset/incoming/`
+(git-ignored: company data). Each line has three channels, and most have a `.gps` track. 18 lines carry a
+`.tag` file (`parsers/spr_tags.py`) with 25 points an operator marked on the radargram. 23 of
+them lie inside the record. Overlaid on the data, the shallow tags sit exactly on hyperbola
+apexes, most strongly on the mid channel (RA1). About half sit where no channel shows a clear
+echo, so they are not all visible targets.
+
+These are the only labels that exist for the company's radar. `scripts/validate_on_tags.py`
+scores detection against them: a tag counts as found when a pick lies within 0.3 m and 1.5 ns of
+it. Chance is the same picks at random positions.
+
+| Channel | Migration picker (15 per line) | Energy-envelope candidates (before) |
+|---|---|---|
+| RA1 (mid) | **12/23 (52%)**, chance 19% | 4/23 (17%), chance 5% |
+| RAD (shallow) | **10/23 (43%)**, chance 14% | 8/23 (35%), chance 16% |
+| RA2 (deep) | 4/23 (17%), chance 9% | 0/23 |
+
+So the Studio now generates its candidates with the migration picker
+(`studio/candidates.ensure_candidates`), on first opening a line. Imported lines previously had
+no candidates at all, because the energy-envelope boxes came from an offline script. Tags are used
+for evaluation, not training: about half would be noisy labels.
+
+## Mendeley utilities and voids (Morocco): evaluated, parked
 
 Abdelaziz et al., *Intelligent recognition of subsurface utilities and voids: A Ground Penetrating
 Radar dataset for Deep Learning applications*, Mendeley Data, 2024. DOI

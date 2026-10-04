@@ -310,6 +310,7 @@ def list_candidates(request: Request, job_name: str) -> list[dict]:
     """Phase-1 candidate boxes plus their shape diagnoses — read-only, see studio/candidates.py."""
     job_dir = _job(request, job_name)
     try:
+        candidate_store.ensure_candidates(job_name, job_dir)
         return [vars(candidate) for candidate in candidate_store.load_candidates(job_name, job_dir)]
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

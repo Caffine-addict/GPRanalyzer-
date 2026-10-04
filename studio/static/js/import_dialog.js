@@ -9,7 +9,7 @@ import * as documents from "./documents.js";
 import * as modal from "./modal.js";
 import { el, replace } from "./dom.js";
 
-const LINE_EXTENSIONS = [".rad", ".ra1", ".ra2", ".gps", ".map", ".dzt", ".rd3", ".rd7", ".sgy", ".segy", ".asc"];
+const LINE_EXTENSIONS = [".rad", ".ra1", ".ra2", ".gps", ".map", ".tag", ".dzt", ".rd3", ".rd7", ".sgy", ".segy", ".asc"];
 
 function isLineFile(file) {
   const name = file.name.toLowerCase();

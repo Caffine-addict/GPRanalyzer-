@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,3 +105,56 @@ def test_entrypoint_points_the_app_at_the_requested_dataset(
     # Bound to loopback: this is a desktop tool holding survey data, not a
     # service meant to be reachable from the network.
     assert served["host"] == "127.0.0.1"
+
+
+def test_a_new_line_gets_migration_candidates_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import numpy as np
+
+    from studio import imports, session
+
+    monkeypatch.chdir(tmp_path)  # annotations/ is written relative to the working directory
+    dataset = tmp_path / "Lines"
+    dataset.mkdir()
+    rng = np.random.default_rng(0)
+    traces = rng.normal(size=(120, 128)) * 5
+    v, t = 0.1, np.arange(128) * 0.2
+    for x in range(120):  # one hyperbola, apex at trace 60, 8 ns
+        arrival = np.sqrt(8.0**2 + (2 * (x - 60) * 0.025 / v) ** 2)
+        a = (np.pi * 0.4 * (t - arrival)) ** 2
+        traces[x] += 400 * (1 - 2 * a) * np.exp(-a)
+    header = b"SAMPLES:128\r\nFREQUENCY:5000\r\nDISTANCE INTERVAL:0.025\r\n"
+    imports.import_line(dataset, "Line_1", [("l.rd3", traces.astype("<i2").tobytes()), ("l.rad", header)])
+
+    job_dir = dataset / "Line_1"
+    candidates.ensure_candidates("Line_1", job_dir)
+    first = candidates.box_store.load_boxes("Line_1")
+    assert first and {b.detector for b in first} == {candidates.MIGRATION_DETECTOR}
+    assert any(b.x <= 60 <= b.x + b.w and b.y <= 40 <= b.y + b.h for b in first)  # 8 ns / 0.2 ns = sample 40
+    candidates.ensure_candidates("Line_1", job_dir)
+    assert [b.id for b in candidates.box_store.load_boxes("Line_1")] == [b.id for b in first]  # not regenerated
+    assert session.available_channels(job_dir)[0].extension == "RD3"
+
+
+def test_a_run_that_found_nothing_is_not_repeated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = []
+
+    def fake_generate(job_name: str, job_dir: Path) -> list:
+        runs.append(job_name)
+        marker = candidates.box_store.boxes_path(job_name).parent / candidates._MARKER
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"detector": candidates.MIGRATION_DETECTOR,
+                                      "version": candidates.MIGRATION_DETECTOR_VERSION, "boxes": 0}))
+        return []
+
+    monkeypatch.setattr(candidates, "generate_candidates", fake_generate)
+    candidates.ensure_candidates("Quiet_line", tmp_path)
+    candidates.ensure_candidates("Quiet_line", tmp_path)
+    assert runs == ["Quiet_line"]
+
+
+def test_deeper_targets_get_wider_boxes() -> None:
+    shallow = candidates.hyperbola_half_width_m(apex_ns=2.0, velocity_m_per_ns=0.1)
+    deep = candidates.hyperbola_half_width_m(apex_ns=20.0, velocity_m_per_ns=0.1)
+    assert shallow < deep
+    assert deep == pytest.approx(0.5 * 0.1 * ((23.0**2 - 20.0**2) ** 0.5))  # where the limb is 3 ns below the apex

@@ -2,7 +2,7 @@
 
 Two kinds of upload, kept apart because they are different things:
 
-- **A radar line** — an SPR line's `.RAD/.RA1/.RA2` channels (optionally with `.gps`/`.map`
+- **A radar line** — an SPR line's `.RAD/.RA1/.RA2` channels (optionally with `.gps`/`.map`/`.tag`
   sidecars), or one GSSI `.dzt`, MALÅ `.rd3`/`.rd7` (with its `.rad` header), SEG-Y, or ASCII
   export (`.asc`: distance, time, amplitude; how IDS and other closed formats get out) file. It becomes a new job folder that opens like any delivered line. Every channel must
   actually parse before anything lands in the dataset, and the whole line is staged and moved in
@@ -57,6 +57,8 @@ def _line_destination(client_name: str, job_name: str, mala: str | None) -> str:
         return f"Single-01.{channel}"
     if suffix.lower() == "gps":
         return "Single-01.gps"
+    if suffix.lower() == "tag":  # the operator's target tags, kept with the line (parsers/spr_tags.py)
+        return "Single-01.tag"
     if suffix.lower() == "map":
         return f"{job_name}.map"
     raise ValueError(
