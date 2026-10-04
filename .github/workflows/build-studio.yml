@@ -1,0 +1,32 @@
+# Builds the GPR Studio desktop app for Windows and Linux and checks each one starts and serves.
+# macOS is built locally (packaging/gpr_studio.spec): macOS runner minutes cost 10x on private repos.
+name: build-studio
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install the Studio's dependencies (no detector) and PyInstaller
+        run: uv venv && uv pip install ".[build]"
+      - name: Build
+        run: uv run --no-project python -m PyInstaller packaging/gpr_studio.spec --noconfirm
+      - name: Smoke test the built app
+        run: packaging/smoke_test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gpr-studio-${{ matrix.os }}
+          path: dist/GPR Studio/

@@ -7,8 +7,6 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python>=4.9",
     "pillow>=10.0",
-    "ultralytics>=8.1",
-    "torch>=2.2",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "groq>=0.11",
@@ -25,7 +23,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The YOLO detector and its training. The Studio never imports these, so the packaged app leaves
+# them out (packaging/gpr_studio.spec); the live pipeline and training need them.
+detector = [
+    "ultralytics>=8.1",
+    "torch>=2.2",
+]
+build = [
+    "pyinstaller>=6.10",
+]
 dev = [
+    "gpr-analyzer[detector]",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
