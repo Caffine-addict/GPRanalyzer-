@@ -68,7 +68,7 @@ let state = Object.freeze({
   candidates: [],      // Phase-1 auto-detected regions, read-only (studio/candidates.py)
   showCandidates: false,
   fit: null,           // last automatic fit result from the server
-  hyperbola: null,     // {apexTrace, apexTimeNs, velocity, curve[], source}
+  hyperbola: null,     // {apexTrace, apexTimeNs (from time zero), velocity, timeZeroSample, curve[], source}
   measure: null,       // {from:{trace,sample}, to:{trace,sample}}
 
   // Reasoning layers (studio/assistant.py) and the supervisor's review of their claims.

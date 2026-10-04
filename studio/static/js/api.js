@@ -57,11 +57,12 @@ export function fitHyperbola(job, channel, region) {
   });
 }
 
-export function previewCurve(job, channel, apexTrace, apexTimeNs, velocity) {
+export function previewCurve(job, channel, apexTrace, apexTimeNs, velocity, timeZeroSample = 0) {
   const query = new URLSearchParams({
     apex_trace: String(apexTrace),
     apex_time_ns: String(apexTimeNs),
     velocity_m_per_ns: String(velocity),
+    time_zero_sample: String(timeZeroSample),
   });
   return request(`/api/jobs/${encodeURIComponent(job)}/channels/${channel}/curve?${query}`);
 }

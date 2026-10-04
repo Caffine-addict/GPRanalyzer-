@@ -139,6 +139,12 @@ export function resize() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 }
 
+/* Raw sample index of the ground surface: the "First sample" processing setting. */
+export function timeZeroSample(state) {
+  // A whole sample: the field accepts any number, and the server takes only whole samples.
+  return Math.max(0, Math.round(state.processing?.time_zero_sample ?? 0));
+}
+
 export function draw() {
   const state = getState();
   const channel = activeChannel(state);
@@ -159,14 +165,17 @@ export function draw() {
   ctx.fillRect(plot.x, plot.y, plot.w, plot.h);
 
   if (image) {
+    // The server crops the rows above time zero, so the image starts there. Every coordinate
+    // on screen stays a raw sample index; only times and depths are measured from time zero.
     ctx.imageSmoothingEnabled = false;
-    const topLeft = dataToScreen(view, 0, 0);
+    const t0 = timeZeroSample(state);
+    const topLeft = dataToScreen(view, 0, t0);
     ctx.drawImage(
       image,
       topLeft.x,
       topLeft.y,
       channel.n_traces * view.scaleX,
-      channel.n_samples * view.scaleY,
+      (channel.n_samples - t0) * view.scaleY,
     );
   }
 
@@ -225,15 +234,16 @@ function drawRulers(state, channel) {
   // Depth ruler — two-way time is what was measured; depth is that time times a
   // velocity. Both are drawn, time in the dimmer secondary position, so the
   // derived quantity is never the only thing on the axis.
-  const nsLo = view.originSample * channel.sample_interval_ns;
-  const nsHi = (view.originSample + plot.h / view.scaleY) * channel.sample_interval_ns;
+  const t0 = timeZeroSample(state);
+  const nsLo = (view.originSample - t0) * channel.sample_interval_ns;
+  const nsHi = (view.originSample - t0 + plot.h / view.scaleY) * channel.sample_interval_ns;
   // Each depth tick carries two stacked labels (depth over time), so it needs
   // roughly twice the room a single-line ruler would.
   const stepNs = niceStep(nsHi - nsLo, Math.max(2, Math.floor(plot.h / 78)));
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   for (let ns = Math.ceil(nsLo / stepNs) * stepNs; ns <= nsHi; ns += stepNs) {
-    const { y } = dataToScreen(view, 0, ns / channel.sample_interval_ns);
+    const { y } = dataToScreen(view, 0, t0 + ns / channel.sample_interval_ns);
     if (y < plot.y + 10 || y > plot.y + plot.h - 4) continue;
     ctx.strokeStyle = COLOURS.tick;
     ctx.beginPath();
@@ -313,6 +323,8 @@ function drawHyperbola(state, channel) {
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   overlay.curve.forEach((point, index) => {
+    // The curve's times are record times (the server adds time zero back); the apex time is
+    // measured from time zero, so it is offset here.
     const { x, y } = dataToScreen(state.view, point.trace, point.time_ns / channel.sample_interval_ns);
     index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
@@ -321,7 +333,7 @@ function drawHyperbola(state, channel) {
   const apex = dataToScreen(
     state.view,
     overlay.apexTrace,
-    overlay.apexTimeNs / channel.sample_interval_ns,
+    overlay.timeZeroSample + overlay.apexTimeNs / channel.sample_interval_ns,
   );
   ctx.fillStyle = ctx.strokeStyle;
   ctx.beginPath();

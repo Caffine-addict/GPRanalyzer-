@@ -156,7 +156,8 @@ async function fitRegion(region) {
   if (!state.job || !state.channel) return;
   setState({ status: "Fitting hyperbola…" });
   try {
-    const result = await api.fitHyperbola(state.job, state.channel, region);
+    const timeZeroSample = view.timeZeroSample(state);
+    const result = await api.fitHyperbola(state.job, state.channel, { ...region, time_zero_sample: timeZeroSample });
     if (!result.fit) {
       setState({ fit: null, hyperbola: null, status: result.reason });
       return;
@@ -167,6 +168,7 @@ async function fitRegion(region) {
         apexTrace: result.fit.apex_trace,
         apexTimeNs: result.fit.apex_time_ns,
         velocity: result.fit.velocity_m_per_ns,
+        timeZeroSample,
         curve: result.curve,
         source: "fitted",
       },
@@ -185,6 +187,7 @@ async function setManualVelocity(value) {
   try {
     const result = await api.previewCurve(
       state.job, state.channel, state.hyperbola.apexTrace, state.hyperbola.apexTimeNs, value,
+      state.hyperbola.timeZeroSample,
     );
     const current = getState();
     if (current.hyperbola?.velocity !== value) return; // superseded by a newer drag
@@ -209,7 +212,13 @@ async function savePick(point) {
   }
 
   const trace = overlay ? overlay.apexTrace : point.trace;
-  const timeNs = overlay ? overlay.apexTimeNs : point.sample * channel.sample_interval_ns;
+  // Time is measured from time zero (the surface); `sample` stays a raw index for drawing.
+  const t0 = overlay ? overlay.timeZeroSample : view.timeZeroSample(state);
+  const timeNs = overlay ? overlay.apexTimeNs : (point.sample - t0) * channel.sample_interval_ns;
+  if (timeNs <= 0) {
+    setState({ status: "That point is above time zero (the ground surface) — no depth to put on it." });
+    return;
+  }
   const depthM = (velocity.value * timeNs) / 2;
 
   const label = await modal.promptText({
@@ -227,7 +236,7 @@ async function savePick(point) {
     await api.createPick(state.job, {
       channel: channel.extension,
       trace,
-      sample: timeNs / channel.sample_interval_ns,
+      sample: t0 + timeNs / channel.sample_interval_ns,
       time_ns: timeNs,
       depth_m: depthM,
       velocity_m_per_ns: velocity.value,

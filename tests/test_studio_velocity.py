@@ -7,10 +7,14 @@ import pytest
 
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 from studio.velocity import (
+    SEMBLANCE_PERMITTIVITIES,
     depth_from_time,
     dielectric_from_velocity,
     fit_region,
     hyperbola_curve,
+    is_peaked,
+    semblance_curve,
+    stacked_permittivity,
     velocity_from_dielectric,
     velocity_from_limb_point,
 )
@@ -194,3 +198,53 @@ def test_fit_region_rejects_a_non_positive_sample_interval() -> None:
             trace_start=5, sample_start=5, trace_span=20, sample_span=20,
             trace_spacing_m=0.025, sample_interval_ns=0.0,
         )
+
+
+def test_fit_region_measures_time_from_the_given_time_zero() -> None:
+    # The same hyperbola recorded 3 ns late (air gap, cable delay): fitted from the record start
+    # its curvature implies the wrong velocity; fitted from the surface echo it is recovered.
+    velocity, delay_ns = 0.1, 3.0
+    late = _synthetic_hyperbola_traces(velocity=velocity, apex_trace=100, apex_time_ns=5.0)
+    late = np.roll(late, round(delay_ns / 0.1), axis=1)
+    kwargs = {"trace_start": 60, "sample_start": 70, "trace_span": 80, "sample_span": 120,
+                  "trace_spacing_m": 0.025, "sample_interval_ns": 0.1}
+    naive = fit_region(late, **kwargs)
+    fit = fit_region(late, **kwargs, time_zero_sample=delay_ns / 0.1)
+    assert fit is not None and naive is not None
+    assert fit.velocity_m_per_ns == pytest.approx(velocity, rel=0.1)
+    assert abs(naive.velocity_m_per_ns / velocity - 1) > 0.08  # 11% here: ~26% in permittivity
+    assert fit.apex_time_ns == pytest.approx(5.0, abs=0.3)
+    assert fit.apex_sample == pytest.approx(80.0, abs=3)  # still an index into the record
+
+
+def _arch(eps: float, *, flat: bool = False) -> np.ndarray:
+    """(n_samples, n_traces) from time zero: one Ricker arch at 0.6 m, or a flat layer."""
+    dt, spacing, apex_sample = 0.097, 0.02, 120
+    v = 0.2998 / np.sqrt(eps)
+    t = np.arange(400)[:, None] * dt
+    lateral = (np.arange(200)[None, :] - 100) * spacing
+    arrival = apex_sample * dt if flat else np.sqrt((apex_sample * dt) ** 2 + (2 * lateral / v) ** 2)
+    a = (np.pi * 0.27 * (t - arrival)) ** 2
+    return (1 - 2 * a) * np.exp(-a) + np.random.default_rng(3).normal(size=(400, 200)) * 0.05
+
+
+@pytest.mark.parametrize("eps", [6.0, 9.0, 17.0])
+def test_semblance_peaks_at_the_true_permittivity(eps: float) -> None:
+    curve = semblance_curve(_arch(eps), apex_trace=100, apex_sample=120,
+                            trace_spacing_m=0.02, sample_interval_ns=0.097)
+    assert is_peaked(curve)
+    assert SEMBLANCE_PERMITTIVITIES[int(np.argmax(curve))] == pytest.approx(eps, rel=0.06)
+
+
+def test_a_flat_layer_is_not_taken_for_an_arch() -> None:
+    curve = semblance_curve(_arch(9.0, flat=True), apex_trace=100, apex_sample=120,
+                            trace_spacing_m=0.02, sample_interval_ns=0.097)
+    assert not is_peaked(curve)
+
+
+def test_stacking_ignores_flat_events_and_refuses_too_few_arches() -> None:
+    args = {"apex_trace": 100, "apex_sample": 120, "trace_spacing_m": 0.02, "sample_interval_ns": 0.097}
+    arches = [semblance_curve(_arch(12.0), **args)] * 3
+    flat = [semblance_curve(_arch(9.0, flat=True), **args)] * 5
+    assert stacked_permittivity(arches + flat) == pytest.approx(12.0, rel=0.06)
+    assert stacked_permittivity(arches[:2] + flat) is None

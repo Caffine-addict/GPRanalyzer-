@@ -33,8 +33,8 @@ Kept current as items close. Written 2026-10-04.
 |---|---|
 | Synthetic training batch (26 scenes) | Running; builds the dataset, checks the cavity rule and trains automatically |
 | Validate apex polarity on real data | Validated on simulation only; Twente cannot test it until detection beats chance |
-| Automatic detection on real data | **At chance** on 71 excavated Twente surveys (docs/EXTERNAL_DATA.md). Needs a detector trained or tuned on real lines; Twente's trench depths plus surveyed line positions would make a proper training/validation set |
-| Automatic velocity on real data | **Worse than guessing** (38.8% vs 23.4% median error). Fitting is sound on a hyperbola an interpreter picks; automatic selection of hyperbolas is not. Keep velocity interpreter-picked until it is fixed |
+| Automatic detection on real data | **No evidence it finds utilities**: picks score the same as the same picks with positions scrambled (29.7% vs 29.4%), and six physics-based pick scores did not change that. Needs real labelled lines with positions (Twente plus surveyed line offsets would do) to train or tune a detector |
+| Automatic velocity on real data | Improved: 21.9% median error vs 23.4% for guessing (was 38.8%). Still reads wet soils (ε 13-19.5) as ~9-11. Next: wire `stacked_permittivity` into the Studio as a whole-line velocity suggestion, labelled as an estimate; validate wet-soil readings against trench depths |
 | Validate ringing and top/bottom echo rules | Need real metal examples / water-filled pipes |
 | PAS 128 grade on deliverables | Not claimable without ground truth and survey-grade positions |
 | Monitoring and logging for a deployed service | Not built |

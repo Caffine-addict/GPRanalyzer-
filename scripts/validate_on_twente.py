@@ -4,24 +4,23 @@ The dataset (docs/EXTERNAL_DATA.md): 125 utility surveys at 13 Dutch constructio
 air-launched GPR. Each survey has a trial trench drawing (distance and depth of every utility
 found) and the soil's relative permittivity, as the surveyors calibrated it.
 
-Three things are scored, each against a baseline that says what chance alone would give:
+Scored, each against a baseline that says what chance alone would give:
 
-1. **Velocity** (studio/velocity.fit_region, unchanged). Hyperbolas are proposed by migrating at
-   one fixed neutral velocity, so the survey's own permittivity never leaks in; the fitter then
-   measures each one. A survey's median fitted permittivity is compared with the reported one,
-   against the baseline of guessing the dataset's median for every survey.
-2. **Utility recall, detector** (detect/classical.find_candidate_boxes + fit_region, unchanged).
-3. **Utility recall, migration picker**: peaks of the migrated envelope, the textbook method.
+1. **Velocity**, two ways, against guessing the dataset's median permittivity for every survey.
+   Arches are proposed by migrating at one fixed neutral velocity, so a survey's own permittivity
+   never leaks in. (a) studio/velocity.fit_region on each arch, median per survey. (b) Semblance:
+   studio/velocity.semblance_curve per arch, flat events rejected, summed over the survey
+   (stacked_permittivity).
+2. **Utility recall**: the Studio detector (detect/classical + fit_region) and a migration picker.
+   Survey lines run parallel to the trench (survey_map.png), so a line should show the trench's
+   utilities at the drawn distances and depths. A line's start offset and walking direction are
+   not recorded, so the best shift (±3 m) and direction are searched; a utility counts as found if
+   an apex lies within 0.3 m along the line and 0.15 m (or 15%) in depth. That search finds
+   matches in any clutter, so the control is the same line's picks at the same depths with their
+   positions scrambled: only recall above it shows the picks are where the utilities are.
 
-For (2) and (3): survey lines run parallel to the trench (survey_map.png), so a line should show
-the trench's utilities at the drawn distances and depths. A line's start offset and walking
-direction are not recorded, so the best shift (±3 m) and direction are searched; a utility counts
-as found if an apex lies within 0.3 m along the line and 0.15 m (or 15%) in depth. The same search
-against other surveys' utility patterns is the chance control — the search finds some matches in
-any clutter, and only recall above the control means anything.
-
-Depth is timed from the strongest early echo (direct wave and ground surface overlap for an
-air-launched antenna: about ±0.5 ns, ±2.5 cm) and converted with the reported permittivity.
+All times are measured from the strongest early echo (time zero: the direct wave and ground
+surface overlap for an air-launched antenna, about ±0.5 ns), depths with the reported permittivity.
 
 Usage: .venv/bin/python scripts/validate_on_twente.py [Dataset/external/twente_utilities]
 """
@@ -36,6 +35,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from multiprocessing import Pool
 from pathlib import Path
 
 import cv2
@@ -46,18 +46,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from detect.classical import find_candidate_boxes
 from parsers.segy import read_segy
 from studio.processing import migrate, remove_background
-from studio.velocity import fit_region
+from studio.velocity import fit_region, semblance_curve, stacked_permittivity
 
 C = 0.2998  # m/ns
 MIN_R2 = 0.85  # detector apexes, as the Studio accepts them
 VELOCITY_MIN_R2 = 0.95  # fits that measure a survey's velocity
+ARCHES_PER_LINE = 8
 NEUTRAL_EPS = 12.0  # migration velocity for proposing hyperbolas; mid-range of the dataset
 MIGRATION_PEAK_K = 5.0  # a peak must exceed this many times the envelope's median
-FITS_PER_LINE = 5
 DEPTH_TOLERANCE_M = 0.15
 POSITION_TOLERANCE_M = 0.30
 MAX_SHIFT_M = 3.0
-CONTROL_PATTERNS = 3
+CONTROL_SEEDS = 5
 
 
 # --- ground truth ---------------------------------------------------------------------------------
@@ -162,7 +162,7 @@ def migration_peaks(traces: np.ndarray, dt: float, spacing: float, surface: int)
 
 
 def analyse_line(path: Path) -> dict[str, object]:
-    """Apex times (from the surface echo) and positions by both methods, and velocity fits."""
+    """Apexes by both methods, and per-arch velocity measurements, all timed from time zero."""
     line = read_segy(path)
     traces, dt = line.traces, line.sample_interval_ns
     spacing = line.trace_spacing_m or 0.02
@@ -173,23 +173,28 @@ def analyse_line(path: Path) -> dict[str, object]:
         if w < 3 or h < 3:
             continue
         fit = fit_region(traces, trace_start=x, sample_start=y, trace_span=w, sample_span=h,
-                         trace_spacing_m=spacing, sample_interval_ns=dt)
-        if fit is not None and fit.physically_plausible and fit.r2 >= MIN_R2 and fit.apex_sample > surface:
-            detector.append({"x_m": fit.apex_trace * spacing, "t_ns": (fit.apex_sample - surface) * dt})
+                         trace_spacing_m=spacing, sample_interval_ns=dt, time_zero_sample=surface)
+        if fit is not None and fit.physically_plausible and fit.r2 >= MIN_R2 and fit.apex_time_ns > 0:
+            detector.append({"x_m": fit.apex_trace * spacing, "t_ns": fit.apex_time_ns})
 
     peaks = migration_peaks(traces, dt, spacing, surface)
     picker = [{"x_m": x * spacing, "t_ns": (s - surface) * dt} for x, s, _ in peaks]
 
+    data = remove_background(traces.T[surface:], "mean", 0)
     half = int(0.8 / spacing)
-    fitted_eps = []
-    for x, s, _ in peaks[:FITS_PER_LINE]:
+    fitted_eps, curves = [], []
+    for x, s, _ in peaks[:ARCHES_PER_LINE]:
+        curves.append(semblance_curve(data, apex_trace=x, apex_sample=s - surface,
+                                      trace_spacing_m=spacing, sample_interval_ns=dt))
         start = max(0, x - half)
-        fit = fit_region(traces, trace_start=start, sample_start=max(surface, s - 10),
+        fit = fit_region(traces, trace_start=start, sample_start=max(surface + 1, s - 10),
                          trace_span=min(2 * half, len(traces) - start), sample_span=100,
-                         trace_spacing_m=spacing, sample_interval_ns=dt)
-        if fit is not None and fit.physically_plausible and fit.r2 >= VELOCITY_MIN_R2 and abs(fit.apex_trace - x) <= 5:
+                         trace_spacing_m=spacing, sample_interval_ns=dt, time_zero_sample=surface)
+        if fit is not None and fit.physically_plausible and fit.r2 >= VELOCITY_MIN_R2 \
+                and fit.apex_time_ns > 0 and abs(fit.apex_trace - x) <= 5:
             fitted_eps.append(fit.dielectric)
-    return {"length_m": (len(traces) - 1) * spacing, "detector": detector, "picker": picker, "fitted_eps": fitted_eps}
+    return {"length_m": (len(traces) - 1) * spacing, "detector": detector, "picker": picker,
+            "fitted_eps": fitted_eps, "curves": curves}
 
 
 # --- scoring --------------------------------------------------------------------------------------
@@ -227,52 +232,74 @@ def _ranks(values: list[float]) -> np.ndarray:
     return np.argsort(np.argsort(values)).astype(float)
 
 
+def _scrambled(apexes: list[dict], length: float, seed: int) -> list[dict]:
+    """The same picks at the same depths, at random positions along the line."""
+    xs = np.random.default_rng(seed).uniform(0, length, len(apexes))
+    return [{"x_m": float(x), "depth_m": a["depth_m"]} for x, a in zip(xs, apexes, strict=True)]
+
+
+def _velocity_scores(pairs: list[tuple[float, float]], guess: float) -> dict[str, object]:
+    reported, measured = zip(*pairs, strict=True)
+    error = [abs(m / r - 1) for r, m in pairs]
+    return {"surveys_measured": len(pairs),
+            "median_abs_error_pct": round(100 * statistics.median(error), 1),
+            "within_25pct": sum(e <= 0.25 for e in error),
+            "rank_correlation": round(float(np.corrcoef(_ranks(list(reported)), _ranks(list(measured)))[0, 1]), 2),
+            "baseline_median_abs_error_pct": round(100 * statistics.median(abs(guess / r - 1) for r in reported), 1),
+            "baseline_within_25pct": sum(abs(guess / r - 1) <= 0.25 for r in reported)}
+
+
 def summarise(surveys: list[dict]) -> dict[str, object]:
-    result: dict[str, object] = {"surveys": len(surveys), "lines": sum(len(s["lines"]) for s in surveys)}
+    with_truth = [s for s in surveys if s["truth"]]
+    result: dict[str, object] = {"surveys": len(surveys), "lines": sum(len(s["lines"]) for s in surveys),
+                                 "surveys_with_trench_truth": len(with_truth)}
     for method in ("detector", "picker"):
         own, control = [], []
-        for i, s in enumerate(surveys):
-            others = [surveys[(i + k) % len(surveys)] for k in range(1, CONTROL_PATTERNS + 1)]
+        for s in with_truth:
             for line in s["lines"]:
                 apexes = _with_depth(line[method], s["eps"])
                 own.append(recall(s["truth"], line["length_m"], apexes))
-                control.extend(recall(o["truth"], line["length_m"], apexes) for o in others if o is not s)
+                control.append(statistics.mean(recall(s["truth"], line["length_m"], _scrambled(apexes, line["length_m"], k))
+                                               for k in range(CONTROL_SEEDS)))
         result[f"recall_{method}"] = {"per_line": round(statistics.mean(own), 3),
-                                      "chance_control": round(statistics.mean(control), 3)}
+                                      "positions_scrambled": round(statistics.mean(control), 3)}
 
-    measured = [(s["eps"], statistics.median(e)) for s in surveys
-                if len(e := [x for line in s["lines"] for x in line["fitted_eps"]]) >= 3]
-    if measured:
-        reported, fitted = zip(*measured, strict=True)
-        guess = statistics.median(reported)
-        error = [abs(f / r - 1) for r, f in measured]
-        baseline = [abs(guess / r - 1) for r in reported]
-        result["velocity"] = {
-            "surveys_with_3plus_fits": len(measured),
-            "median_abs_error_pct": round(100 * statistics.median(error), 1),
-            "baseline_median_abs_error_pct": round(100 * statistics.median(baseline), 1),
-            "within_25pct": sum(e <= 0.25 for e in error),
-            "baseline_within_25pct": sum(e <= 0.25 for e in baseline),
-            "rank_correlation": round(float(np.corrcoef(_ranks(list(reported)), _ranks(list(fitted)))[0, 1]), 2),
-        }
+    guess = statistics.median(s["eps"] for s in surveys)  # in-sample: flatters the baseline, if anything
+    fits = [(s["eps"], statistics.median(e)) for s in surveys
+            if len(e := [x for line in s["lines"] for x in line["fitted_eps"]]) >= 3]
+    stacked = [(s["eps"], e) for s in surveys
+               if (e := stacked_permittivity([c for line in s["lines"] for c in line["curves"]])) is not None]
+    result["velocity_hyperbola_fit"] = _velocity_scores(fits, guess) if fits else None
+    result["velocity_semblance_stacked"] = _velocity_scores(stacked, guess) if stacked else None
     return result
 
 
 def score(root: Path) -> dict[str, object]:
     meta = metadata(root)
-    surveys = []
-    for folder in sorted(p for p in root.glob("*/*") if (p / "ground-truth.png").exists()):
+    surveys, jobs, owners = {}, [], []
+    for folder in sorted(p for p in root.glob("*/*") if (p / "Radargrams").is_dir()):
         sid = folder.name
         if sid not in meta or not meta[sid]["Ground relative permittivity"]:
             continue
-        truth = trench_table(folder / "ground-truth.png")
-        if not truth:
-            continue
-        lines = [analyse_line(sgy) for sgy in sorted((folder / "Radargrams").glob("*.sgy"))]
-        surveys.append({"id": sid, "eps": float(meta[sid]["Ground relative permittivity"]),
-                        "truth": truth, "lines": lines})
-        print(f"{sid}: {len(truth)} utilities, {len(lines)} lines", file=sys.stderr, flush=True)
-    return summarise(surveys)
+        truth = trench_table(folder / "ground-truth.png") if (folder / "ground-truth.png").exists() else []
+        surveys[sid] = {"id": sid, "eps": float(meta[sid]["Ground relative permittivity"]), "truth": truth, "lines": []}
+        for sgy in sorted((folder / "Radargrams").glob("*.sgy")):
+            jobs.append(sgy)
+            owners.append(sid)
+    print(f"{len(surveys)} surveys, {len(jobs)} lines", file=sys.stderr, flush=True)
+    with Pool(max(1, (os.cpu_count() or 2) // 2)) as pool:
+        for sid, line in zip(owners, pool.imap(_safe_analyse, jobs, chunksize=4), strict=True):
+            if line is not None:
+                surveys[sid]["lines"].append(line)
+    return summarise([s for s in surveys.values() if s["lines"]])
+
+
+def _safe_analyse(path: Path) -> dict[str, object] | None:
+    try:
+        return analyse_line(path)
+    except ValueError as exc:  # an unreadable file is reported and left out, never guessed
+        print(f"skipped {path}: {exc}", file=sys.stderr, flush=True)
+        return None
 
 
 if __name__ == "__main__":

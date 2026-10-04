@@ -164,6 +164,38 @@ def test_curve_endpoint_returns_the_depth_and_permittivity_it_implies(client: Te
     assert body["dielectric"] == pytest.approx(8.99, abs=0.05)
 
 
+def _interval(client: TestClient, job: str) -> float:
+    channels = client.get(f"/api/jobs/{job}").json()["channels"]
+    return next(c["sample_interval_ns"] for c in channels if c["extension"] == "RAD")
+
+
+def test_curve_times_are_record_times_offset_by_time_zero(client: TestClient, job: str) -> None:
+    params = {"apex_trace": 100, "apex_time_ns": 8.0, "velocity_m_per_ns": 0.1}
+    plain = client.get(f"/api/jobs/{job}/channels/RAD/curve", params=params).json()
+    shifted = client.get(f"/api/jobs/{job}/channels/RAD/curve", params={**params, "time_zero_sample": 10}).json()
+    interval = _interval(client, job)
+    assert shifted["curve"][0]["time_ns"] - plain["curve"][0]["time_ns"] == pytest.approx(10 * interval)
+    assert shifted["depth_m"] == plain["depth_m"]  # depth is measured from time zero either way
+
+
+@pytest.mark.parametrize("bad", [-1, 10**6, 2.5, True, "3"])
+def test_a_time_zero_outside_the_record_is_rejected(client: TestClient, job: str, bad: object) -> None:
+    region = {"trace_start": 100, "sample_start": 112, "trace_span": 19, "sample_span": 80}
+    response = client.post(f"/api/jobs/{job}/channels/RAD/fit", json={**region, "time_zero_sample": bad})
+    assert response.status_code == 422
+
+
+def test_fit_with_time_zero_measures_the_apex_from_it(client: TestClient, job: str) -> None:
+    region = {"trace_start": 100, "sample_start": 112, "trace_span": 19, "sample_span": 80}
+    body = client.post(f"/api/jobs/{job}/channels/RAD/fit", json={**region, "time_zero_sample": 5}).json()
+    if body["fit"] is None:
+        pytest.skip("no hyperbola in this region of the sample data")
+    fit, interval = body["fit"], _interval(client, job)
+    assert fit["apex_time_ns"] == pytest.approx((fit["apex_sample"] - 5) * interval)
+    apex_point = min(body["curve"], key=lambda p: p["time_ns"])
+    assert apex_point["time_ns"] == pytest.approx(fit["apex_sample"] * interval, abs=interval)
+
+
 def test_picks_round_trip_through_the_api(client: TestClient, job: str) -> None:
     assert client.get(f"/api/jobs/{job}/picks").json() == []
 

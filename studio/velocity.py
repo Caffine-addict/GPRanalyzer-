@@ -144,6 +144,7 @@ def hyperbola_curve(
     trace_spacing_m: float,
     n_traces: int,
     half_width_traces: int = 60,
+    time_zero_ns: float = 0.0,
 ) -> list[dict[str, float]]:
     """The diffraction hyperbola a point reflector at this apex would draw.
 
@@ -151,6 +152,9 @@ def hyperbola_curve(
     the operator tunes velocity by eye (the classic manual fit — turn the dial
     until the curve lies on the limbs), and drawn from an automatic fit to show
     what was actually fitted.
+
+    `apex_time_ns` is measured from time zero (the surface); the returned times are record
+    times, `time_zero_ns` later, so they draw straight onto the radargram.
     """
     if velocity_m_per_ns <= 0:
         raise ValueError(f"velocity must be positive, got {velocity_m_per_ns}")
@@ -159,7 +163,7 @@ def hyperbola_curve(
     hi = min(n_traces, int(apex_trace) + half_width_traces + 1)
     traces = np.arange(lo, hi, dtype=np.float64)
     lateral_m = (traces - apex_trace) * trace_spacing_m
-    times = np.sqrt(apex_time_ns**2 + (2.0 * lateral_m / velocity_m_per_ns) ** 2)
+    times = time_zero_ns + np.sqrt(apex_time_ns**2 + (2.0 * lateral_m / velocity_m_per_ns) ** 2)
     return [{"trace": float(t), "time_ns": float(v)} for t, v in zip(traces, times, strict=True)]
 
 
@@ -197,6 +201,7 @@ def fit_region(
     trace_spacing_m: float,
     sample_interval_ns: float,
     seed: int = 0,
+    time_zero_sample: float = 0.0,
 ) -> VelocityFit | None:
     """Automatically fit a hyperbola inside an operator-drawn region.
 
@@ -204,6 +209,10 @@ def fit_region(
     `ScanFrame.traces` — the fitter works off the raw signal deliberately, not
     off whatever the display chain is currently doing, so the measured velocity
     doesn't move when someone changes the gain.
+
+    `time_zero_sample` is where the wave enters the ground (the surface echo). The hyperbola
+    t^2 = t0^2 + (2x/v)^2 holds for time measured from there; measured from the record start
+    instead, a few ns of air gap or cable delay bends the curvature and the velocity with it.
 
     Returns None when the region's ridge points don't describe a hyperbola.
     That is a real answer ("there's no point reflector here"), not a failure.
@@ -215,7 +224,8 @@ def fit_region(
 
     envelope = compute_normalized_envelope(raw_traces, sample_interval_ns)
     xs, ts = extract_ridge_points(envelope, trace_start, sample_start, trace_span, sample_span)
-    fit = fit_hyperbola_ransac(xs, ts, seed=seed)
+    keep = ts > time_zero_sample
+    fit = fit_hyperbola_ransac(xs[keep], ts[keep] - time_zero_sample, seed=seed)
     if fit is None:
         return None
 
@@ -224,7 +234,7 @@ def fit_region(
     plausible = 0 < velocity <= _MAX_PLAUSIBLE_VELOCITY_M_PER_NS
     return VelocityFit(
         apex_trace=float(fit.x0),
-        apex_sample=float(fit.t0),
+        apex_sample=float(fit.t0 + time_zero_sample),
         apex_time_ns=float(apex_time_ns),
         velocity_m_per_ns=float(velocity),
         # A faster-than-light fit has no meaningful permittivity (it would be
@@ -364,3 +374,70 @@ def estimate_velocity_by_focusing(
         best_dielectric=float(dielectric_from_velocity(best_velocity)),
         peak_ratio=peak_ratio,
     )
+
+
+# --- velocity by semblance over many arches ---------------------------------------------------
+# Validated on 117 professionally surveyed Twente sites (docs/EXTERNAL_DATA.md): stacking the
+# semblance of every clearly peaked arch on a line cut the median permittivity error from 70%
+# (straight hyperbola fits on automatically chosen boxes) to 22% on held-out sites.
+
+SEMBLANCE_PERMITTIVITIES = tuple(float(e) for e in np.round(np.geomspace(4.0, 30.0, 41), 2))
+_FLAT_EDGE = 4  # a best permittivity this close to the range ends is a flat event, not an arch
+_MIN_PROMINENCE = 0.02  # how far the peak must rise above the range ends
+
+
+def semblance_curve(
+    data: np.ndarray,
+    *,
+    apex_trace: int,
+    apex_sample: int,
+    trace_spacing_m: float,
+    sample_interval_ns: float,
+    half_width_traces: int = 30,
+    window_samples: int = 3,
+) -> np.ndarray:
+    """How coherently the signal lines up along the hyperbola of each trial permittivity.
+
+    `data` is (n_samples, n_traces), background-removed, with row 0 at time zero (the surface):
+    t(x)^2 = t0^2 + (2x/v)^2 only holds for time measured from there. Semblance is the energy of
+    the stacked trace over the total energy, 1 for a perfect arch and ~1/N for noise; the
+    permittivity whose curve lies on the arch's limbs scores highest.
+    """
+    n_samples, n_traces = data.shape
+    xs = np.arange(max(0, apex_trace - half_width_traces), min(n_traces, apex_trace + half_width_traces + 1))
+    lateral_m = np.abs(xs - apex_trace) * trace_spacing_m
+    window = np.arange(-window_samples, window_samples + 1)
+    out = np.zeros(len(SEMBLANCE_PERMITTIVITIES))
+    for i, eps in enumerate(SEMBLANCE_PERMITTIVITIES):
+        v = 0.2998 / np.sqrt(eps)
+        rows = np.rint(np.sqrt(apex_sample**2 + (2 * lateral_m / v / sample_interval_ns) ** 2)).astype(int)
+        rows = rows[:, None] + window[None, :]
+        inside = ((rows >= 0) & (rows < n_samples)).all(axis=1)
+        if inside.sum() < 10:
+            continue
+        a = data[rows[inside], xs[inside][:, None]]
+        energy = inside.sum() * float((a**2).sum())
+        out[i] = float((a.sum(axis=0) ** 2).sum()) / energy if energy > 0 else 0.0
+    return out
+
+
+def is_peaked(curve: np.ndarray) -> bool:
+    """True for a real arch: one interior best permittivity rising clear of the range ends.
+
+    Flat layers left after background removal look like infinitely fast hyperbolas, so their
+    semblance keeps climbing toward the low-permittivity end; on Twente they dragged estimates
+    for wet soils down to the bottom of the range until this check rejected them.
+    """
+    best = int(np.argmax(curve))
+    return _FLAT_EDGE <= best < len(curve) - _FLAT_EDGE and curve[best] - min(curve[0], curve[-1]) >= _MIN_PROMINENCE
+
+
+def stacked_permittivity(curves: Sequence[np.ndarray], min_arches: int = 3) -> float | None:
+    """One permittivity for a set of arches in the same ground: the peak of their summed curves.
+
+    None when fewer than `min_arches` clear arches remain: too few to say, not a guess.
+    """
+    peaked = [c for c in curves if is_peaked(c)]
+    if len(peaked) < min_arches:
+        return None
+    return SEMBLANCE_PERMITTIVITIES[int(np.argmax(np.sum(peaked, axis=0)))]

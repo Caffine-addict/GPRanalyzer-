@@ -233,6 +233,7 @@ def fit_hyperbola(
     try:
         frame = session.load_frame(job_dir, extension)
         info = session.describe_channel(frame, extension)
+        time_zero = _time_zero_sample(payload.get("time_zero_sample", 0), info.n_samples)
         fit = velocity.fit_region(
             session.raw_traces(frame),
             trace_start=int(payload["trace_start"]),
@@ -241,6 +242,7 @@ def fit_hyperbola(
             sample_span=int(payload["sample_span"]),
             trace_spacing_m=info.trace_spacing_m,
             sample_interval_ns=info.sample_interval_ns,
+            time_zero_sample=time_zero,
         )
     except (KeyError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid fit region: {exc}") from exc
@@ -260,8 +262,16 @@ def fit_hyperbola(
             velocity_m_per_ns=fit.velocity_m_per_ns,
             trace_spacing_m=info.trace_spacing_m,
             n_traces=info.n_traces,
+            time_zero_ns=time_zero * info.sample_interval_ns,
         ),
     }
+
+
+def _time_zero_sample(value: object, n_samples: int) -> int:
+    """The operator's time zero ("First sample"), validated: a whole sample inside the record."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < n_samples:
+        raise ValueError(f"time_zero_sample must be a whole sample in 0..{n_samples - 1}, got {value!r}")
+    return value
 
 
 @app.get("/api/jobs/{job_name}/channels/{extension}/curve")
@@ -272,6 +282,7 @@ def preview_curve(
     apex_trace: float = Query(...),
     apex_time_ns: float = Query(...),
     velocity_m_per_ns: float = Query(...),
+    time_zero_sample: int = Query(0),
 ) -> dict:
     """The hyperbola a given apex and velocity would draw — the manual-fit overlay."""
     job_dir = _job(request, job_name)
@@ -283,6 +294,7 @@ def preview_curve(
             velocity_m_per_ns=velocity_m_per_ns,
             trace_spacing_m=info.trace_spacing_m,
             n_traces=info.n_traces,
+            time_zero_ns=_time_zero_sample(time_zero_sample, info.n_samples) * info.sample_interval_ns,
         )
     except (session.JobNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
