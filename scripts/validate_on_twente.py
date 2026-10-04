@@ -18,6 +18,11 @@ Scored, each against a baseline that says what chance alone would give:
    an apex lies within 0.3 m along the line and 0.15 m (or 15%) in depth. That search finds
    matches in any clutter, so the control is the same line's picks at the same depths with their
    positions scrambled: only recall above it shows the picks are where the utilities are.
+3. **Utility recall on the map** (survey/mapping): each line placed by its GNSS track, the picker's
+   top picks put on the survey's common axis and kept only when they line up on 3+ lines, as an
+   interpreter traces a pipe from line to line. One trench position and direction per survey is
+   searched, not one per line, so chance matches drop sharply. Same scrambled-position control,
+   plus how many surveys beat it and a sign test across surveys.
 
 All times are measured from the strongest early echo (time zero: the direct wave and ground
 surface overlap for an air-launched antenna, about ±0.5 ns), depths with the reported permittivity.
@@ -30,6 +35,7 @@ from __future__ import annotations
 import csv
 import itertools
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -47,6 +53,7 @@ from detect.classical import find_candidate_boxes
 from parsers.segy import read_segy
 from studio.processing import migrate, remove_background
 from studio.velocity import fit_region, semblance_curve, stacked_permittivity
+from survey.mapping import along_axis, place_line, survey_axis, traced_across_lines
 
 C = 0.2998  # m/ns
 MIN_R2 = 0.85  # detector apexes, as the Studio accepts them
@@ -58,6 +65,9 @@ DEPTH_TOLERANCE_M = 0.15
 POSITION_TOLERANCE_M = 0.30
 MAX_SHIFT_M = 3.0
 CONTROL_SEEDS = 5
+MAPPED_PICKS_PER_LINE = 5
+MAPPED_MIN_LINES = 3
+MAPPED_CONTROL_SEEDS = 10
 
 
 # --- ground truth ---------------------------------------------------------------------------------
@@ -167,6 +177,9 @@ def analyse_line(path: Path) -> dict[str, object]:
     traces, dt = line.traces, line.sample_interval_ns
     spacing = line.trace_spacing_m or 0.02
     surface = int(np.argmax(np.abs(traces.mean(axis=0)[: int(10 / dt)])))
+    # Wheel distance per trace: the encoder's own record, which can drift from index * spacing.
+    distances = line.distances_m if line.distances_m is not None else np.arange(len(traces)) * spacing
+    index = np.arange(len(traces))
 
     detector = []
     for x, y, w, h in find_candidate_boxes(traces, dt):
@@ -175,10 +188,10 @@ def analyse_line(path: Path) -> dict[str, object]:
         fit = fit_region(traces, trace_start=x, sample_start=y, trace_span=w, sample_span=h,
                          trace_spacing_m=spacing, sample_interval_ns=dt, time_zero_sample=surface)
         if fit is not None and fit.physically_plausible and fit.r2 >= MIN_R2 and fit.apex_time_ns > 0:
-            detector.append({"x_m": fit.apex_trace * spacing, "t_ns": fit.apex_time_ns})
+            detector.append({"x_m": float(np.interp(fit.apex_trace, index, distances)), "t_ns": fit.apex_time_ns})
 
     peaks = migration_peaks(traces, dt, spacing, surface)
-    picker = [{"x_m": x * spacing, "t_ns": (s - surface) * dt} for x, s, _ in peaks]
+    picker = [{"x_m": float(distances[x]), "t_ns": (s - surface) * dt} for x, s, _ in peaks]
 
     data = remove_background(traces.T[surface:], "mean", 0)
     half = int(0.8 / spacing)
@@ -193,8 +206,9 @@ def analyse_line(path: Path) -> dict[str, object]:
         if fit is not None and fit.physically_plausible and fit.r2 >= VELOCITY_MIN_R2 \
                 and fit.apex_time_ns > 0 and abs(fit.apex_trace - x) <= 5:
             fitted_eps.append(fit.dielectric)
-    return {"length_m": (len(traces) - 1) * spacing, "detector": detector, "picker": picker,
-            "fitted_eps": fitted_eps, "curves": curves}
+    placement = place_line(line.positions_m, distances) if line.positions_m is not None else None
+    return {"length_m": float(distances[-1]), "detector": detector, "picker": picker,
+            "fitted_eps": fitted_eps, "curves": curves, "placement": placement}
 
 
 # --- scoring --------------------------------------------------------------------------------------
@@ -249,6 +263,70 @@ def _velocity_scores(pairs: list[tuple[float, float]], guess: float) -> dict[str
             "baseline_within_25pct": sum(abs(guess / r - 1) <= 0.25 for r in reported)}
 
 
+def _mapped_found(truth: list[dict], lines: list[tuple[float, list[float], list[float]]], axis_lines: list) -> int:
+    """Utility-line matches for the best single trench position and direction on the survey axis."""
+    along = [[float(a) for a in along_axis(pl, np.asarray(xs), axis_lines[1])] if xs else []
+             for pl, (_, xs, _) in zip(axis_lines[0], lines, strict=True)]
+    points = [list(zip(a, depths, strict=True)) for a, (_, _, depths) in zip(along, lines, strict=True)]
+    keep = traced_across_lines(points, min_lines=MAPPED_MIN_LINES)
+    points = [[p for p, k in zip(row, ks, strict=True) if k] for row, ks in zip(points, keep, strict=True)]
+    flat = [a for row in points for a, _ in row]
+    if not flat:
+        return 0
+    best = 0
+    for sign in (1.0, -1.0):
+        for origin in np.arange(min(flat) - 4.0, max(flat) + 4.0, 0.05):
+            best = max(best, sum(_count(truth, row, float(origin), sign) for row in points))
+    return best
+
+
+def _count(truth: list[dict], points: list[tuple[float, float]], origin: float, sign: float) -> int:
+    """Utilities with an unused point within tolerance of origin + sign * trench distance."""
+    used: set[int] = set()
+    for u in truth:
+        best = None
+        for i, (along, depth) in enumerate(points):
+            dx, dz = abs(along - (origin + sign * u["distance_m"])), abs(depth - u["depth_m"])
+            if i in used or dx > POSITION_TOLERANCE_M or dz > max(DEPTH_TOLERANCE_M, 0.15 * u["depth_m"]):
+                continue
+            if best is None or dx + dz < best[0]:
+                best = (dx + dz, i)
+        if best is not None:
+            used.add(best[1])
+    return len(used)
+
+
+def _mapped_detection(surveys: list[dict]) -> dict[str, object] | None:
+    """Picker picks on the GNSS map, traced across lines, against the same picks scrambled."""
+    found = scrambled = total = better = worse = 0
+    scored = 0
+    for s in surveys:
+        placed = [line for line in s["lines"] if line["placement"] is not None]
+        if not s["truth"] or len(placed) < 2:
+            continue
+        axis = survey_axis([line["placement"] for line in placed])
+        velocity = C / np.sqrt(s["eps"])
+        top = [line["picker"][:MAPPED_PICKS_PER_LINE] for line in placed]
+        lines = [(line["length_m"], [p["x_m"] for p in picks], [velocity * p["t_ns"] / 2 for p in picks])
+                 for line, picks in zip(placed, top, strict=True)]
+        frame = ([line["placement"] for line in placed], axis)
+        own = _mapped_found(s["truth"], lines, frame)
+        rng = np.random.default_rng(0)
+        control = statistics.mean(
+            _mapped_found(s["truth"], [(length, list(rng.uniform(0, length, len(xs))), depths)
+                                       for length, xs, depths in lines], frame)
+            for _ in range(MAPPED_CONTROL_SEEDS))
+        found, scrambled, total = found + own, scrambled + control, total + len(s["truth"]) * len(placed)
+        better, worse, scored = better + (own > control), worse + (own < control), scored + 1
+    if not scored:
+        return None
+    n = better + worse
+    sign_p = 2 * sum(math.comb(n, k) for k in range(min(better, worse) + 1)) / 2**n if n else 1.0
+    return {"surveys": scored, "found_per_line": round(found / total, 3),
+            "positions_scrambled": round(scrambled / total, 3),
+            "surveys_better": better, "surveys_worse": worse, "sign_test_p": round(min(sign_p, 1.0), 4)}
+
+
 def summarise(surveys: list[dict]) -> dict[str, object]:
     with_truth = [s for s in surveys if s["truth"]]
     result: dict[str, object] = {"surveys": len(surveys), "lines": sum(len(s["lines"]) for s in surveys),
@@ -263,6 +341,8 @@ def summarise(surveys: list[dict]) -> dict[str, object]:
                                                for k in range(CONTROL_SEEDS)))
         result[f"recall_{method}"] = {"per_line": round(statistics.mean(own), 3),
                                       "positions_scrambled": round(statistics.mean(control), 3)}
+
+    result["recall_picker_mapped_traced"] = _mapped_detection(with_truth)
 
     guess = statistics.median(s["eps"] for s in surveys)  # in-sample: flatters the baseline, if anything
     fits = [(s["eps"], statistics.median(e)) for s in surveys

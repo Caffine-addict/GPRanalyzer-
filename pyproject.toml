@@ -55,6 +55,7 @@ packages = [
     "studio",
     "reference",
     "simulate",
+    "survey",
 ]
 
 [build-system]

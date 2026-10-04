@@ -32,10 +32,45 @@ Scored by `scripts/validate_on_twente.py`. Results are in the next section.
 | Surveys within 25% of the reported value | 11 of 37 | 64 of 116 | 85 of 117 |
 | Utilities found per line, Studio detector | 29.4% | 29.7% | 29.4% (same picks, positions scrambled) |
 | Utilities found per line, migration picker | 62.6% | 62.6% | 61.9% (same picks, positions scrambled) |
+| **Utilities found, picks on the GNSS map, traced on 3+ lines** | n/a | **17.4%** | 10.3% (same picks, positions scrambled) |
+| Surveys where mapped picks beat the scrambled control | n/a | **22 better, 4 worse of 39** | sign test p = 0.0005 |
 
 Held-out check for velocity: settings were chosen on half the sites and scored on the other half
 (two-fold, by site). Per-arch fits scored 69.6%, gated fits 46.5%, and stacked semblance with flat
 events rejected **21.7%**, against 23.4% for guessing.
+
+### Layer 1, step 1: lines on the map (2026-10-04)
+
+The SEG-Y traces carry GNSS positions. RadarMap writes the Dutch RD grid (metres) as float32 at
+bytes 171-178, about 3 cm resolution, plus NMEA latitude/longitude where the standard keeps source
+X/Y. Over 750 lines the GNSS chord matches the measuring wheel (median ratio 0.98), and site 01.1's
+twelve lines come out parallel (heading 75°), 0.9-1.1 m apart, as its survey map shows. About 10%
+of lines have a frozen track (one fix) and are left unplaced. Short lines lag the wheel, so a line
+is placed by GNSS start and heading, with the wheel giving distance along it (`survey/mapping.py`).
+
+With every line on one map, a survey has one unknown trench position, not one per line, so chance
+matches fall; and picks can be traced the way an interpreter follows a pipe from line to line.
+This is the first evidence that the automatic analysis finds real utilities:
+
+| Picks kept | Found | Scrambled | Surveys better / worse |
+|---|---|---|---|
+| top 5 per line, traced on 3+ lines (the script's setting) | 17.4% | 10.3% | 22 / 4 of 39 (p = 0.0005) |
+| top 15 per line, traced on 3+ lines (experiment) | 35.5% | 27.5% | 32 / 8 of 44; site-bootstrap 95% CI +5.0 to +12.1 pts |
+| top 15 per line, not traced (experiment) | 39.4% | 32.5% | 35 / 8 of 44; CI +4.3 to +8.8 pts |
+
+The gain is real but modest: most utilities are still missed. The picker was never trained on real
+data, which is Layer 1's next step.
+
+### Layer 1, step 2: velocity from trench depths: not yet possible
+
+Two attempts, both failing for the same reason, which is useful to know:
+- Matching each utility to the nearest traced pick by position alone implied permittivities of
+  0.4-1.7: the nearest pick is usually shallow clutter, not the pipe.
+- Scanning permittivity for the value that explains the most utilities gave nearly flat curves
+  (e.g. 41-49 matches at every value on survey 06.5): chance matches dominate. The "calibrated"
+  values agreed with the surveyors on 11 of 39 surveys.
+
+Trench calibration needs stronger detection first.
 
 ### What changed, and what each change was worth
 
@@ -72,11 +107,11 @@ events rejected **21.7%**, against 23.4% for guessing.
   arches the method recovers 12, 17 and 20, so it has no built-in ceiling. Either those sites'
   arches differ from the model or the reported values were set another way. Trench depths at
   matched utilities would settle it; that needs line positions.
-- **Detection shows no evidence of finding utilities.** Picks score the same as the same picks with
-  their positions scrambled. The test itself is weak, because line offsets are unknown and the
-  offset search matches anything, but there is no signal for it to find. Scoring picks by focus
-  sharpness, semblance, fit agreement with the site velocity, cross-line depth persistence, and
-  combinations of these did not change that: every score stayed within about 1 point of random picks.
+- **Detection without line positions shows no evidence of finding utilities**: line by line, picks
+  score the same as the same picks with their positions scrambled, and scoring picks by focus
+  sharpness, semblance, fit agreement with the site velocity, depth persistence or combinations of
+  these stayed within about 1 point of random picks. On the GNSS map (step 1 above) they do beat
+  chance; the line-by-line test was too weak to see it.
 - A first version of the chance control (other surveys' utility patterns) was biased: random picks
   scored 3 points *below* it. It was replaced by the scrambled-position control.
 
