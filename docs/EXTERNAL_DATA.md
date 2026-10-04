@@ -139,7 +139,28 @@ Before these changes, 71 surveys: detector 29.4% against a control of 32.4%; mig
 62.6% against 64.9%; velocity median error 38.8% against 23.4% for guessing (11 of 37 within 25%).
 Those controls are the biased version described above.
 
-## Mendeley utilities and voids (Morocco): evaluated, parked
+## IFSTTAR test site (TU1208, Nantes): downloaded; exact positions on request
+
+X. Dérobert and L. Pajewski, *TU1208 Open Database of Radargrams: The Dataset of the IFSTTAR
+Geophysical Test Site*, Remote Sensing 10(4):530, 2018; data DOI
+[10.5281/zenodo.1211173](https://doi.org/10.5281/zenodo.1211173). Licence **CC BY 4.0**.
+
+- A purpose-built 30 m pit with five fill materials (silt, limestone, gneiss gravels, a
+  multilayer). Every buried object was surveyed by theodolite.
+- In each pipe region, three layers of three 2.5 m pipes. The order outward from the site's
+  centre line is an empty steel pipe, a water-filled PVC pipe, then an empty PVC pipe. In silt the
+  layers lie at 0.80, 1.20 and 1.83 m (to the pipe top), spaced 0.5, 0.7 and 1.0 m (Figure 6).
+  There are also polystyrene blocks (voids), a 500 mm concrete pipe, stones, masonry, a steel
+  girder and cables.
+- 67 profiles from GSSI (.dzt), MALÅ (.rd3/.rad) and IDS (.dt, plus ASCII) radars at 200-900 MHz.
+  This makes it ideal test data for format readers (`parsers/dzt.py` reads the GSSI files).
+- **Limit:** the paper's figures are schematics. In the 400 MHz silt line-2 profile, two shallow
+  pipes drawn 0.5 m apart image about 0.38 m apart, so pipe-by-pipe labels can't be read off the
+  figures. The paper offers "a complete topographical file describing ... the position of each
+  buried object" on request from IFSTTAR. That file would turn this into an exact benchmark for
+  depth, velocity and steel vs water-filled vs empty plastic pipe.
+
+
 
 Abdelaziz et al., *Intelligent recognition of subsurface utilities and voids: A Ground Penetrating
 Radar dataset for Deep Learning applications*, Mendeley Data, 2024. DOI

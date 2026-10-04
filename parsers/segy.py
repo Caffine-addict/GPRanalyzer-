@@ -21,24 +21,16 @@ Two GPR conventions differ from the seismic standard, and both are checked rathe
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from parsers.line import RadarLine
 
 _TEXT, _BINARY, _TRACE_HEADER = 3200, 400, 240
 _MAX_FIELD = 32_767  # samples and interval are signed 16-bit; a swap of a sane value lands above or <= 0
 _MAX_TRACE_STEP_M = 1.0
 _FORMATS = {1: None, 2: "i4", 3: "i2", 5: "f4", 8: "i1"}  # 1 = IBM float: not supported
-
-
-@dataclass(frozen=True)
-class SegyLine:
-    traces: np.ndarray  # (n_traces, n_samples), float64
-    sample_interval_ns: float
-    trace_spacing_m: float | None  # None when the headers carry no usable distance
-    distances_m: np.ndarray | None
-    positions_m: np.ndarray | None = None  # (n_traces, 2) easting, northing in the file's grid
 
 
 def _layout(data: bytes, endian: str) -> tuple[int, int, int] | None:
@@ -56,7 +48,7 @@ def _layout(data: bytes, endian: str) -> tuple[int, int, int] | None:
     return (samples, interval, fmt) if body > 0 and body % trace_bytes == 0 else None
 
 
-def read_segy(path: Path) -> SegyLine:
+def read_segy(path: Path) -> RadarLine:
     data = Path(path).read_bytes()
     for endian, prefix in (("<", "<"), (">", ">")):
         layout = _layout(data, endian)
@@ -77,7 +69,7 @@ def read_segy(path: Path) -> SegyLine:
     steps = np.diff(x)
     spacing = float(np.median(steps)) if steps.size and np.median(steps) > 0 else None
     positions = _positions(data[:_TEXT], headers, endian, factor)
-    return SegyLine(traces, interval / 1000.0, spacing, x if spacing else None, positions)
+    return RadarLine(traces, interval / 1000.0, spacing, x if spacing else None, positions)
 
 
 def _positions(text: bytes, headers: np.ndarray, endian: str, factor: float) -> np.ndarray | None:
