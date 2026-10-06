@@ -37,9 +37,15 @@ assert len(_RECORD_HEADER) == 64
 def _encode_header_field(text: str) -> bytes:
     """Real header fields are [uint16 LE length][ascii text][null terminator],
     not newline-separated lines — confirmed against real files, where
-    `strings`-style tools misleadingly render them as clean text lines."""
+    `strings`-style tools misleadingly render them as clean text lines.
+    The length counts the text plus 3 (its own two bytes and the terminator): measured on all
+    180 delivered and imported channel files, and what the parser now checks."""
     payload = text.encode("ascii") + b"\x00"
-    return struct.pack("<H", len(payload)) + payload
+    return struct.pack("<H", len(payload) + 2) + payload
+
+
+def _fields(*texts: str) -> bytes:
+    return b"".join(_encode_header_field(t) for t in texts)
 
 
 _TEXT_HEADER = b"".join(
@@ -54,7 +60,9 @@ _TEXT_HEADER = b"".join(
         "SPR_CHANNEL_NUM 0",
         "ANTENNA_TYPE_DETECTED eQUANTUM",
         "WHEEL_CIRCUMFERENCE_MM 1276.7",
-        "LINE_ID 01",
+        # No LINE_ID here: in real files the header's LINE_ID is the first trace record's own
+        # field, read because the header window reaches it. A text-header copy would encode to
+        # exactly the record tag and be taken for a record (it was, once prefixes were corrected).
     )
 )
 
@@ -274,9 +282,13 @@ def test_only_real_vendor_fields_survive_the_header_scan() -> None:
     union = set().union(*per_file.values())
     common = set.intersection(*per_file.values())
 
-    # Every file now yields exactly the same field set — no file-specific phantom keys.
-    assert union == common, f"fields present in some files but not others: {sorted(union - common)}"
-    assert len(union) == 33, f"expected 33 real header fields, got {len(union)}: {sorted(union)}"
+    # Every file yields the same field set — no file-specific phantom keys — except a field only
+    # some releases of the radar software write: REVERSED_FOR_ZIGZAG is in the delivered Job_
+    # lines and company Sets 3-5, absent from Sets 1-2 (2026-10-04 files). Anything else present
+    # in only some files is misread binary.
+    release_dependent = {"REVERSED_FOR_ZIGZAG"}
+    assert union - common <= release_dependent, f"fields in some files only: {sorted(union - common - release_dependent)}"
+    assert len(common) == 32, f"expected 32 header fields in every file, got {len(common)}: {sorted(common)}"
 
     # Spot-check the fields this project's conclusions actually rest on.
     for required in (
@@ -289,7 +301,7 @@ def test_only_real_vendor_fields_survive_the_header_scan() -> None:
 
 def test_a_short_key_is_not_accepted_as_a_field() -> None:
     # Every real field name is four characters or more; every phantom one was three or fewer.
-    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00Z 5\x00NR 7\x00YPI 9\x00")
+    header = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22", "Z 5", "NR 7", "YPI 9"))
     assert "ACQUISITION_DATE" in header
     assert "Z" not in header
     assert "NR" not in header
@@ -298,18 +310,33 @@ def test_a_short_key_is_not_accepted_as_a_field() -> None:
 
 def test_a_value_carrying_control_bytes_is_not_accepted_as_a_field() -> None:
     # The giveaway for misread binary: real values are printable text, phantom ones are not.
-    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00LONGKEY \x08\x07\x06junk\x00")
+    header = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22", "LONGKEY \x08\x07\x06junk"))
     assert header["ACQUISITION_DATE"] == "12/24/22"
     assert "LONGKEY" not in header
 
     # DEL (0x7F) sits outside the 0x00-0x1F range and needs pinning separately — dropping it
     # from the guard left the whole suite green, because no real file happens to contain one.
-    delimited = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00LONGKEY abc\x7Fdef\x00")
+    delimited = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22", "LONGKEY abc\x7Fdef"))
     assert "LONGKEY" not in delimited
 
 
 def test_a_real_field_with_an_empty_value_is_still_kept() -> None:
     # An empty NOTE is a real, meaningful state — the operator wrote nothing. Dropping it
     # would be indistinguishable from the field not existing.
-    header = _parse_text_header(b"ACQUISITION_DATE 12/24/22\x00NOTE \x00")
+    header = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22", "NOTE "))
     assert header["NOTE"] == ""
+
+
+def test_a_printable_key_without_its_length_prefix_is_misread_binary() -> None:
+    # `KA93XO`: six capitals inside binary data of one new company file, with an empty value.
+    # Length and printability let it through; the missing length prefix does not.
+    header = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22") + b"\xff\xc6KA93XO \x00")
+    assert "ACQUISITION_DATE" in header
+    assert "KA93XO" not in header
+
+
+def test_a_long_value_is_kept() -> None:
+    # A field of 256+ bytes has a non-zero high length byte; it must be read like any other.
+    note = "x" * 300
+    header = _parse_text_header(_fields("ACQUISITION_DATE 12/24/22", f"NOTE {note}"))
+    assert header["NOTE"] == note

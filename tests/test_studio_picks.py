@@ -96,7 +96,7 @@ def test_deleting_an_unknown_pick_reports_false_rather_than_raising() -> None:
 def test_a_corrupt_pick_file_raises_instead_of_being_silently_overwritten(tmp_path: Path) -> None:
     # Overwriting would destroy an interpreter's work without anyone noticing.
     _add()
-    picks._picks_path("Job_0703").write_text("{ not json")
+    picks.picks_path("Job_0703").write_text("{ not json")
     with pytest.raises(ValueError, match="corrupt pick file"):
         picks.load_picks("Job_0703")
 
@@ -104,7 +104,7 @@ def test_a_corrupt_pick_file_raises_instead_of_being_silently_overwritten(tmp_pa
 def test_an_unsafe_job_name_cannot_escape_the_annotations_directory() -> None:
     for unsafe in ("../etc", "", ".hidden", "a\\..\\evil"):
         with pytest.raises(ValueError, match="unsafe job name"):
-            picks._picks_path(unsafe)
+            picks.picks_path(unsafe)
 
 
 def test_csv_export_puts_velocity_provenance_on_every_row() -> None:
@@ -177,7 +177,7 @@ def test_a_pick_file_written_before_the_field_existed_still_loads(tmp_path: Path
             }
         ]
     }
-    path = picks._picks_path("Job_0703")
+    path = picks.picks_path("Job_0703")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(legacy))
 

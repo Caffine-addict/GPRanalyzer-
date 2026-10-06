@@ -68,13 +68,13 @@ def _job_dir(job_name: str) -> Path:
     return safe_job_dir(_ANNOTATIONS_ROOT, job_name)
 
 
-def _picks_path(job_name: str) -> Path:
+def picks_path(job_name: str) -> Path:
     return _job_dir(job_name) / "picks.json"
 
 
 def load_picks(job_name: str) -> list[Pick]:
     """Every pick on a job, oldest first. A job with no picks yet is not an error."""
-    path = _picks_path(job_name)
+    path = picks_path(job_name)
     if not path.exists():
         return []
     try:
@@ -87,7 +87,7 @@ def load_picks(job_name: str) -> list[Pick]:
 
 
 def _save(job_name: str, picks: list[Pick]) -> None:
-    write_text_atomically(_picks_path(job_name), json.dumps({"picks": [asdict(p) for p in picks]}, indent=2) + "\n")
+    write_text_atomically(picks_path(job_name), json.dumps({"picks": [asdict(p) for p in picks]}, indent=2) + "\n")
 
 
 def add_pick(

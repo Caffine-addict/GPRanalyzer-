@@ -210,13 +210,14 @@ it. Chance is the same picks at random positions.
 (direct wave at about 1.6, 4.2 and 6.4 ns on RAD, RA1 and RA2). Measured from it, one target lines
 up across channels to a median 0.8 ns. Picks at one position and time on several channels become
 one target (every member within tolerance of every other, so no chaining), and corroborated
-targets rank first. Time zero is the median of each trace's direct-wave arrival. Counted per location an operator checks:
+targets rank first. Time zero is the median over traces of each trace's direct-wave arrival on the
+envelope. Counted per location an operator checks:
 
 | Locations checked per line | Channels kept separate | Merged, corroborated first |
 |---|---|---|
-| 3 | 9/23 (39%), chance 7% | **14/23 (61%)**, chance 13% |
-| 5 | 10/23 (43%), chance 8% | **14/23 (61%)**, chance 19% |
-| 10 | 13/23 (57%), chance 17% | **17/23 (74%)**, chance 30% |
+| 3 | 9/23 (39%), chance 7% | **13/23 (57%)**, chance 15% |
+| 5 | 10/23 (43%), chance 8% | **14/23 (61%)**, chance 16% |
+| 10 | 13/23 (57%), chance 17% | **17/23 (74%)**, chance 27% |
 
 When a tag is found, the pick lies a median 5 cm from it along the line and about 0.8 ns
 (roughly 4 cm of depth at permittivity 9) from it in time.
@@ -225,6 +226,20 @@ So the Studio now generates its candidates with the migration picker
 (`studio/candidates.ensure_candidates`), on first opening a line. Imported lines previously had
 no candidates at all, because the energy-envelope boxes came from an offline script. Tags are used
 for evaluation, not training: about half would be noisy labels.
+
+### Field mode on the company lines (`studio/site_map.py`, 2026-10-05)
+
+A site is assembled from its lines' own GPS. On Set 1 the fixes scatter a median 7 cm about each
+line's straight walk and agree with the wheel to 8 cm, which is RTK-grade behaviour. Some lines are
+much worse (0.6 m), so every line carries its own measured jitter. Each target's horizontal error
+combines that jitter, the pick's position error (5 cm) and the GPS-to-radar antenna offset (unknown,
+0.15 m allowed): a median ±0.2 m on Set 1. Set 1 is a grid, so lines are grouped by heading and
+pipes are tracked within each group.
+
+Utility runs are checked against chance: the same targets at random positions along their lines.
+On Set 1, 2 runs were found against 2.4 by chance, so they are labelled unconfirmed. No run crossed
+4 or more lines (none by chance either). The map does not present them as pipes. Set 2 has no GPS
+and is listed as not placed.
 
 ## Mendeley utilities and voids (Morocco): evaluated, parked
 

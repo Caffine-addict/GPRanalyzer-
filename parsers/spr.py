@@ -46,7 +46,8 @@ _SAMPLE_DTYPE = np.dtype("<i2")
 # were one- to three-letter names (`C`, `Z`, `NR`, `YPI`) whose values were control bytes.
 # Every genuine field in the format is 4+ characters, so the length floor separates them
 # cleanly. See tests/test_parsers_spr.py, which pins the real 33 against the real files.
-_HEADER_FIELD_RE = re.compile(r"([A-Z][A-Z0-9_]{3,})\s+(.*)")
+# Matched on the raw bytes: key, whitespace, value up to the field's NUL terminator.
+_HEADER_FIELD_BYTES_RE = re.compile(rb"([A-Z][A-Z0-9_]{3,})[ \t]+([^\x00]*)\x00")
 
 # The second, independent guard: a real value is printable text. Misread binary is not. Keeping
 # both means a 4+ character phantom key still cannot get in on name length alone.
@@ -74,18 +75,23 @@ def _parse_text_header(data: bytes) -> dict[str, str]:
     if anchor < 0:
         raise ValueError(f"SPR text header not found: {_HEADER_ANCHOR!r} does not appear in file")
 
-    window = data[anchor : anchor + _HEADER_WINDOW]
     header: dict[str, str] = {}
-    for fragment in window.split(b"\x00"):
-        match = _HEADER_FIELD_RE.search(fragment.decode("ascii", errors="ignore"))
-        if match is None:
+    window = data[anchor : anchor + _HEADER_WINDOW]
+    for match in _HEADER_FIELD_BYTES_RE.finditer(window):
+        at = anchor + match.start()
+        text_length = match.end() - match.start() - 1  # the field's text, without its terminator
+        # Each real field is [uint16 length = text + 3][text][NUL] (all 180 channel files,
+        # 2026-10-05). The prefix is read where the key starts, so a long value (high length byte
+        # not zero) is handled like a short one; misread binary carries no such prefix, so a
+        # printable phantom key (`KA93XO`, in one file) is rejected.
+        if at < 2 or struct.unpack("<H", data[at - 2 : at])[0] != text_length + 3:
             continue
-        value = match.group(2)
+        value = match.group(2).decode("ascii", errors="replace")
         # An empty value is real and meaningful (an operator who wrote no NOTE); a value
         # carrying control bytes is misread binary. Only the second is rejected.
         if _CONTROL_CHARS.intersection(value):
             continue
-        header[match.group(1)] = value.strip()
+        header[match.group(1).decode("ascii")] = value.strip()
     return header
 
 

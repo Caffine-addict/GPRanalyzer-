@@ -22,6 +22,10 @@ import numpy as np
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS, migrate, remove_background
 
 DEFAULT_PICKS = 15
+# Migration leaves faint copies ("smiles") beneath a strong target. A pick below a stronger one,
+# within this lateral reach and weaker than this fraction of it, is taken as such an echo.
+SHADOW_REACH_M = 0.5
+SHADOW_RATIO = 0.3
 _PEAK_OVER_MEDIAN = 3.0
 _SKIP_TOP_NS = 1.0  # direct wave and antenna ringing
 _SKIP_BOTTOM_FRACTION = 0.1  # migration edge, where the spreading gain blows up
@@ -78,5 +82,14 @@ def pick_targets(
     window = (max(3, int(2.0 / sample_interval_ns)), max(3, int(0.4 / trace_spacing_m)))
     is_peak = (env == cv2.dilate(env, np.ones(window, np.uint8))) & (env > _PEAK_OVER_MEDIAN * median)
     rows, cols = np.nonzero(is_peak)
-    order = np.argsort(-env[rows, cols])[:max_picks]
-    return [Pick(int(cols[i]), int(rows[i]), float(env[rows[i], cols[i]] / median)) for i in order]
+    kept: list[Pick] = []
+    reach = SHADOW_REACH_M / trace_spacing_m
+    for i in np.argsort(-env[rows, cols]):
+        pick = Pick(int(cols[i]), int(rows[i]), float(env[rows[i], cols[i]] / median))
+        if any(abs(k.trace - pick.trace) <= reach and k.sample < pick.sample and pick.strength < SHADOW_RATIO * k.strength
+               for k in kept):
+            continue  # an echo beneath a stronger target, not a target of its own
+        kept.append(pick)
+        if len(kept) == max_picks:
+            break
+    return kept

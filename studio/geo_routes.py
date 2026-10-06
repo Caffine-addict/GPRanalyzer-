@@ -16,7 +16,7 @@ from fastapi.responses import Response
 
 from reference import sue_geo
 from studio import candidates as candidate_store
-from studio import geo_export, georef, gps_georef, session
+from studio import geo_export, georef, gps_georef, session, site_map
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -218,8 +218,38 @@ def line_geojson(request: Request, job_name: str, download: bool = False) -> Res
     return _geojson(line_collection(request, job_name), f"{job_name}.geojson" if download else None)
 
 
+@router.get("/api/sites")
+def list_sites(request: Request) -> list[dict[str, Any]]:
+    """Sites (jobs sharing a name prefix, e.g. Set1_LINE001..) with how many lines each holds."""
+    counts: dict[str, int] = {}
+    for job in session.list_jobs(_dataset_dir(request)):
+        if "_" in job:
+            counts[site_map.site_of(job)] = counts.get(site_map.site_of(job), 0) + 1
+    return [{"site": site, "lines": n} for site, n in sorted(counts.items()) if n >= 2]
+
+
+def _site_collection(request: Request, site: str, antenna_offset_m: float = 0.15) -> dict[str, Any]:
+    if not 0 <= antenna_offset_m <= 5:
+        raise HTTPException(status_code=422, detail="antenna_offset_m must be between 0 and 5 m")
+    if site not in {entry["site"] for entry in list_sites(request)}:
+        raise HTTPException(status_code=404, detail=f"unknown site: {site!r}")
+    try:
+        return site_map.site_geojson(_dataset_dir(request), site, antenna_offset_uncertainty_m=antenna_offset_m)
+    except (ValueError, KeyError, session.JobNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/sites/{site}/field.geojson")
+def site_geojson(request: Request, site: str, download: bool = False, antenna_offset_m: float = 0.15) -> Response:
+    """Field mode: every line of the site on the map, its targets with their errors, and utility runs."""
+    return _geojson(_site_collection(request, site, antenna_offset_m), f"{site}_field.geojson" if download else None)
+
+
 def _scope(request: Request, scope: str) -> tuple[dict[str, Any], str]:
-    """("all" | "vendor" | "lines" | a job name) -> (collection, file stem)."""
+    """("all" | "vendor" | "lines" | "site:<name>" | a job name) -> (collection, file stem)."""
+    if scope.startswith("site:"):
+        site = scope.removeprefix("site:")
+        return _site_collection(request, site), f"{site}_field"
     if scope == "vendor":
         return vendor_collection(request), "vendor_utilities"
     if scope in ("all", "lines"):

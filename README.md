@@ -219,7 +219,9 @@ types from below it — there's no back-reference from, say, `risk/` into
 Requires Python 3.12+. Managed with [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync --extra dev          # or: pip install -e ".[dev]"
+uv sync --all-extras         # dev, detector, sim (h5py) and build (PyInstaller); or: pip install -e ".[dev,sim,build]"
+# A plain `uv sync` or `uv run` keeps only the extras it is given and removes the rest from .venv,
+# which breaks the simulation tests (h5py) and app packaging (PyInstaller).
 cp .env.example .env         # fill in GROQ_API_KEY (optional — see below)
 
 # activate the venv directly if not using `uv run`:

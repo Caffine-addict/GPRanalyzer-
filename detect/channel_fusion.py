@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from detect.migration_picker import Pick
+from detect.migration_picker import Pick, _envelope
 
 POSITION_TOLERANCE_M = 0.3
 TIME_TOLERANCE_NS = 1.5
@@ -50,11 +50,13 @@ def time_zero_ns(traces: np.ndarray, sample_interval_ns: float) -> float:
     strong shallow target only dominates the few traces above it, so the median ignores it. A wide
     spread means no consistent direct wave was found; it is logged rather than trusted silently.
     """
-    data = np.abs(np.asarray(traces, dtype=np.float64))
+    # On the envelope, not |amplitude|: the direct wave has several lobes of similar size, and a
+    # per-trace argmax hops between them (1.5-2 ns of spread on the company's mid channel).
+    data = _envelope(np.asarray(traces, dtype=np.float64).T).T
     early = data[:, : max(1, data.shape[1] // 4)]
     arrivals = np.argmax(early, axis=1) * sample_interval_ns
     q1, q3 = np.percentile(arrivals, [25, 75])
-    if q3 - q1 > _TIME_ZERO_SPREAD_NS:
+    if q3 - q1 > max(_TIME_ZERO_SPREAD_NS, 5 * sample_interval_ns):  # a lobe's width on coarse channels
         logger.warning("time zero uncertain: direct-wave arrivals spread %.1f ns across traces", q3 - q1)
     return float(np.median(arrivals))
 
