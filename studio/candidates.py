@@ -34,7 +34,7 @@ from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 
 MIGRATION_DETECTOR = "migration-picker"
 MIGRATION_DETECTOR_VERSION = "2"  # 2: picks merged across channels (corroboration)
-_BOX_ABOVE_NS, _BOX_BELOW_NS = 1.0, 3.0
+BOX_ABOVE_NS, _BOX_BELOW_NS = 1.0, 3.0  # a migration box starts BOX_ABOVE_NS above its apex
 _MIN_HALF_WIDTH_M, _MAX_HALF_WIDTH_M = 0.2, 1.5
 _DEFAULT_DIELECTRIC = 9.0
 _MARKER = "candidates.json"  # "this job's picker run happened", even when it found nothing
@@ -109,7 +109,7 @@ def generate_candidates(job_name: str, job_dir: Path) -> list[box_store.Box]:
         for pick in channel.picks:
             half = hyperbola_half_width_m(pick.sample * dt, velocity) / spacing
             x0, x1 = max(0.0, pick.trace - half), min(info.n_traces - 1.0, pick.trace + half)
-            y0 = max(0.0, pick.sample - _BOX_ABOVE_NS / dt)
+            y0 = max(0.0, pick.sample - BOX_ABOVE_NS / dt)
             y1 = min(info.n_samples - 1.0, pick.sample + _BOX_BELOW_NS / dt)
             corroboration = seen_on.get((name, pick.trace, pick.sample))
             seen = f"; seen on {corroboration} channels" if corroboration and corroboration > 1 else ""

@@ -16,7 +16,7 @@ from fastapi.responses import Response
 
 from reference import sue_geo
 from studio import candidates as candidate_store
-from studio import geo_export, georef, gps_georef, session, site_map
+from studio import dig_map, geo_export, georef, gps_georef, session, site_map
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -243,6 +243,38 @@ def _site_collection(request: Request, site: str, antenna_offset_m: float = 0.15
 def site_geojson(request: Request, site: str, download: bool = False, antenna_offset_m: float = 0.15) -> Response:
     """Field mode: every line of the site on the map, its targets with their errors, and utility runs."""
     return _geojson(_site_collection(request, site, antenna_offset_m), f"{site}_field.geojson" if download else None)
+
+
+def _dig(request: Request, site: str, include_interpreted: bool,
+         antenna_offset_m: float) -> tuple[list[dig_map.DigItem], list[dig_map.Attention]]:
+    _site_collection(request, site, antenna_offset_m)  # validates site and offset the same way
+    try:
+        return dig_map.dig_items(_dataset_dir(request), site, include_interpreted=include_interpreted,
+                                 antenna_offset_uncertainty_m=antenna_offset_m)
+    except (ValueError, KeyError, session.JobNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/sites/{site}/dig.geojson")
+def dig_geojson(request: Request, site: str, include_interpreted: bool = False, antenna_offset_m: float = 0.15,
+                download: bool = False) -> Response:
+    """Only what people decided: supervisor-confirmed items (and, if asked, interpreted picks)."""
+    items, attention = _dig(request, site, include_interpreted, antenna_offset_m)
+    return _geojson(dig_map.to_geojson(site, items, attention), f"{site}_dig.geojson" if download else None)
+
+
+@router.get("/api/sites/{site}/dig.csv")
+def dig_csv(request: Request, site: str, include_interpreted: bool = False, antenna_offset_m: float = 0.15) -> Response:
+    items, attention = _dig(request, site, include_interpreted, antenna_offset_m)
+    return Response(dig_map.to_csv(items, attention), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{_safe_filename(site)}_dig.csv"'})
+
+
+@router.get("/api/sites/{site}/dig.pdf")
+def dig_pdf(request: Request, site: str, include_interpreted: bool = False, antenna_offset_m: float = 0.15) -> Response:
+    items, attention = _dig(request, site, include_interpreted, antenna_offset_m)
+    return Response(dig_map.to_pdf(site, items, attention), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{_safe_filename(site)}_dig_sheet.pdf"'})
 
 
 def _scope(request: Request, scope: str) -> tuple[dict[str, Any], str]:
