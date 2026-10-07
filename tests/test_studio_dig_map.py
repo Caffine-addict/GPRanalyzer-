@@ -231,3 +231,24 @@ def test_a_corrupt_reports_file_is_flagged_not_fatal(site: Path) -> None:
     items, attention = dig_map.dig_items(site, "Site")
     assert len(items) == 1 and items[0].field_outcome == ""
     assert "unreadable" in attention[0].reason and str(path) not in attention[0].reason
+
+
+def test_the_whole_loop_from_dig_map_to_a_field_verified_training_label(site: Path, tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    from studio import training_export
+    from studio.server import app
+
+    _confirm("Site_L0", _claim(_pipe_box(site, "Site_L0")))
+    monkeypatch.setattr(app.state, "dataset_dir", site, raising=False)
+    client = TestClient(app)
+    item_id = client.get("/api/sites/Site/dig.geojson").json()["features"][0]["properties"]["id"]
+    assert client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "dug", "reporter": "Crew",
+                                                              "depth_found_m": 0.42}).status_code == 200
+    out = tmp_path / "labels"
+    config = Path(__file__).resolve().parents[1] / "config.yaml"  # the fixture works from a temp folder
+    assert training_export.main(["--out", str(out), "--dataset", str(site), "--config", str(config)]) == 0
+    (entry,) = [json.loads(line) for line in (out / "manifest.jsonl").read_text().splitlines()
+                if json.loads(line)["origin_field_verified"]]
+    assert entry["origin_positive"] is True and entry["origin_field_depth_m"] == 0.42
