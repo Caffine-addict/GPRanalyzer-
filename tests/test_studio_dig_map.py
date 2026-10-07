@@ -252,3 +252,95 @@ def test_the_whole_loop_from_dig_map_to_a_field_verified_training_label(site: Pa
     (entry,) = [json.loads(line) for line in (out / "manifest.jsonl").read_text().splitlines()
                 if json.loads(line)["origin_field_verified"]]
     assert entry["origin_positive"] is True and entry["origin_field_depth_m"] == 0.42
+
+
+# ---------------------------------------------------------------- confirming from the field map (2026-10-07)
+
+from studio import site_map
+
+
+def _pipe_suggestion(site: Path) -> dict:
+    features = site_map.site_geojson(site, "Site")["features"]
+    targets = [f["properties"] for f in features if f["properties"]["kind"] == "target" and f["properties"]["job"] == "Site_L0"]
+    return min(targets, key=lambda t: abs(t["chainage_m"] - 4.0) + abs(t["depth_m"] - 0.4))
+
+
+def _seen(suggestion: dict) -> dict:
+    """Where the caller saw the suggestion, as the UI sends it."""
+    return {"seen_trace": suggestion["trace"], "seen_time_ns": suggestion["time_ns"]}
+
+
+def test_a_supervisor_confirms_a_suggestion_straight_onto_the_dig_map(site: Path) -> None:
+    suggestion = _pipe_suggestion(site)
+    review = dig_map.confirm_suggestion(site, "Site", suggestion["id"], identity="water pipe", material="",
+                                        reviewer="Supervisor A", **_seen(suggestion))
+    assert (review.status, review.layer, review.reviewer) == ("confirmed", "field map", "Supervisor A")
+    (item,) = dig_map.dig_items(site, "Site")[0]
+    assert item.id == f"Site_L0#{review.id}" and item.identity == "water pipe"
+    assert item.chainage_m == pytest.approx(4.0, abs=0.05) and item.depth_m == pytest.approx(0.4, abs=0.04)
+
+
+@pytest.mark.parametrize(("target", "kwargs", "error"), [
+    ("Site_L0#T999", {}, KeyError), ("Elsewhere_L1#T1", {}, KeyError),
+    (None, {"reviewer": " "}, ValueError), (None, {"identity": ""}, ValueError),
+])
+def test_bad_confirmations_are_refused(site: Path, target: str | None, kwargs: dict, error: type) -> None:
+    args = {"identity": "pipe", "material": "", "reviewer": "Supervisor A", **_seen(_pipe_suggestion(site))} | kwargs
+    with pytest.raises(error):
+        dig_map.confirm_suggestion(site, "Site", target or _pipe_suggestion(site)["id"], **args)
+
+
+@pytest.mark.parametrize("seen", [{"seen_trace": None}, {"seen_trace": PIPE_TRACE + 40}, {"seen_time_ns": 2.0}])
+def test_a_suggestion_that_moved_since_it_was_seen_is_not_confirmed(site: Path, seen: dict) -> None:
+    # ids are ranks: after a re-run, T<n> can be another target; confirming it blind would put the wrong one on the map
+    suggestion = _pipe_suggestion(site)
+    with pytest.raises(ValueError, match="reload|which suggestion"):
+        dig_map.confirm_suggestion(site, "Site", suggestion["id"], identity="pipe", material="", reviewer="Sup",
+                                   **(_seen(suggestion) | seen))
+    assert dig_map.dig_items(site, "Site")[0] == []
+
+
+def test_a_near_surface_suggestion_needs_the_radargram_checked(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    suggestion = _pipe_suggestion(site) | {"near_surface": True}
+    monkeypatch.setattr(site_map, "site_geojson", lambda *a, **k: {"features": [{"properties": suggestion}]})
+    args = {"identity": "pipe", "material": "", "reviewer": "Sup", **_seen(suggestion)}
+    with pytest.raises(ValueError, match="near the surface"):
+        dig_map.confirm_suggestion(site, "Site", suggestion["id"], **args)
+    dig_map.confirm_suggestion(site, "Site", suggestion["id"], **args, acknowledge_near_surface=True)
+    assert len(dig_map.dig_items(site, "Site")[0]) == 1
+
+
+@pytest.mark.parametrize("earlier", ["confirmed", "rejected"])
+def test_a_decided_target_is_not_confirmed_again(site: Path, earlier: str) -> None:
+    # a second confirm would duplicate the item, and a confirm after a rejection would silently override it
+    box = _pipe_box(site, "Site_L0")
+    _confirm("Site_L0", _claim(box, "cable"), decision=earlier, reviewer="Supervisor B")
+    suggestion = _pipe_suggestion(site)
+    with pytest.raises(dig_map.AlreadyDecided, match=f"already {earlier} by Supervisor B"):
+        dig_map.confirm_suggestion(site, "Site", suggestion["id"], identity="pipe", material="", reviewer="Sup",
+                                   **_seen(suggestion))
+    assert len([r for r in review_store.load_reviews("Site_L0") if r.status == "confirmed"]) == (earlier == "confirmed")
+
+
+def test_confirm_and_report_endpoints(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from studio.server import app
+
+    monkeypatch.setattr(app.state, "dataset_dir", site, raising=False)
+    client = TestClient(app)
+    suggestion = _pipe_suggestion(site)
+    target, seen = suggestion["id"], {"trace": suggestion["trace"], "time_ns": suggestion["time_ns"]}
+    assert client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "pipe",
+                                                        "reviewer": "Sup"}).status_code == 422  # not said where
+    made = client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "pipe", "reviewer": "Sup", **seen})
+    assert made.status_code == 200
+    item_id = made.json()["dig_item_id"]
+    assert client.get("/api/sites/Site/dig.geojson").json()["features"][0]["properties"]["id"] == item_id
+    client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "found", "reporter": "Crew"})
+    (report,) = client.get("/api/sites/Site/field_reports").json()
+    assert report["item_id"] == item_id and report["outcome"] == "found"
+    assert client.post("/api/sites/Site/confirm", json={"target_id": "Site_L0#T999", "identity": "x",
+                                                        "reviewer": "Sup"}).status_code == 404
+    assert client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "x",
+                                                        "reviewer": "", **seen}).status_code == 422
+    again = client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "x", "reviewer": "B", **seen})
+    assert again.status_code == 409 and "Interpret" in again.json()["detail"]

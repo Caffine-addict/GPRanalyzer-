@@ -33,7 +33,7 @@ from studio.diagnose import diagnose_job
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 
 MIGRATION_DETECTOR = "migration-picker"
-MIGRATION_DETECTOR_VERSION = "2"  # 2: picks merged across channels (corroboration)
+MIGRATION_DETECTOR_VERSION = "4"  # 2: merged across channels; 3: no air-speed header; 4: skip the direct wave from time zero
 BOX_ABOVE_NS, _BOX_BELOW_NS = 1.0, 3.0  # a migration box starts BOX_ABOVE_NS above its apex
 _MIN_HALF_WIDTH_M, _MAX_HALF_WIDTH_M = 0.2, 1.5
 _DEFAULT_DIELECTRIC = 9.0
@@ -82,7 +82,7 @@ def generate_candidates(job_name: str, job_dir: Path) -> list[box_store.Box]:
     for info in session.available_channels(job_dir):
         frame = session.load_frame(job_dir, info.extension)
         traces = session.raw_traces(frame)
-        dielectric = frame.dielectric_assumed or _DEFAULT_DIELECTRIC
+        dielectric = session.usable_dielectric(frame) or _DEFAULT_DIELECTRIC
         try:
             picks = pick_targets(traces, sample_interval_ns=info.sample_interval_ns,
                                  trace_spacing_m=info.trace_spacing_m, dielectric=dielectric)

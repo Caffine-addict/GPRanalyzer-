@@ -170,6 +170,27 @@ def load_radargram(job_dir: Path, extension: str) -> tuple[np.ndarray, ChannelIn
     return raw_traces(frame).T, describe_channel(frame, extension)
 
 
+# No soil is below this; air is 1. Company Sets 1-2 record 1.00 (the setting left at its default),
+# which would make every depth about three times too deep. Below it, the header is "not set".
+MIN_PLAUSIBLE_DIELECTRIC = 2.0
+
+
+def usable_dielectric(frame: ScanFrame) -> float | None:
+    """The header's dielectric when it can describe ground, else None (unset, or air)."""
+    value = frame.dielectric_assumed
+    return value if value is not None and value >= MIN_PLAUSIBLE_DIELECTRIC else None
+
+
+def line_dielectric(job_dir: Path) -> float | None:
+    """The line's header dielectric when every channel records the same usable value, else None.
+
+    Channels of one line share one ground; if they disagree, or any is unset or air, no header value
+    is trusted for the line, so every view of it uses the same (measured or default) value.
+    """
+    values = {usable_dielectric(load_frame(job_dir, c.extension)) for c in available_channels(job_dir)}
+    return values.pop() if len(values) == 1 else None
+
+
 def _trace_spacing_m(frame: ScanFrame) -> float:
     spacing = frame.trace_spacing_m
     if spacing is None or spacing <= 0:
@@ -187,8 +208,9 @@ def describe_channel(frame: ScanFrame, extension: str) -> ChannelInfo:
 
     time_window_ns = n_samples * frame.sample_interval_ns
     max_depth_m = None
-    if frame.dielectric_assumed:
-        velocity = SPEED_OF_LIGHT_M_PER_NS / sqrt(frame.dielectric_assumed)
+    dielectric = usable_dielectric(frame)
+    if dielectric:
+        velocity = SPEED_OF_LIGHT_M_PER_NS / sqrt(dielectric)
         max_depth_m = velocity * time_window_ns / 2.0
 
     return ChannelInfo(
@@ -198,7 +220,7 @@ def describe_channel(frame: ScanFrame, extension: str) -> ChannelInfo:
         n_samples=n_samples,
         trace_spacing_m=spacing,
         sample_interval_ns=frame.sample_interval_ns,
-        dielectric_assumed=frame.dielectric_assumed,
+        dielectric_assumed=dielectric,
         line_length_m=n_traces * spacing,
         time_window_ns=time_window_ns,
         max_depth_m=max_depth_m,

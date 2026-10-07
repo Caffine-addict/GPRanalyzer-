@@ -47,3 +47,23 @@ def test_impossible_axes_are_refused(bad: dict) -> None:
     kwargs = {"sample_interval_ns": DT, "trace_spacing_m": SPACING, "dielectric": EPS} | bad
     with pytest.raises(ValueError):
         pick_targets(_line([(60, 8.0)]), **kwargs)
+
+
+def test_nothing_is_picked_on_the_direct_wave() -> None:
+    # A strong direct wave at 2 ns with a kink (what the picker caught on company Set 1), and a pipe
+    # at 8 ns. Nothing inside the direct-wave window is picked; the kink, just past it, still is,
+    # and is what consumers flag as near the surface (skipping further loses real tagged targets).
+    from detect.migration_picker import NEAR_SURFACE_NS, SKIP_BELOW_TIME_ZERO_NS, time_zero_ns
+
+    traces = _line([(120, 8.0)])
+    t = np.arange(traces.shape[1]) * DT
+    for x in range(traces.shape[0]):
+        arrival = 2.0 + (0.3 if 100 <= x <= 110 else 0.0)  # a bump in the surface
+        a = (np.pi * 0.4 * (t - arrival)) ** 2
+        traces[x] += 30 * (1 - 2 * a) * np.exp(-a)
+    zero = time_zero_ns(traces, DT)
+    picks = pick_targets(traces, sample_interval_ns=DT, trace_spacing_m=SPACING, dielectric=EPS)
+    assert all(p.sample * DT >= zero + SKIP_BELOW_TIME_ZERO_NS - 1e-9 for p in picks)
+    kink = [p for p in picks if 100 <= p.trace <= 112 and p.sample * DT < 5]
+    assert kink and all(p.sample * DT - zero < NEAR_SURFACE_NS for p in kink)  # flagged, not trusted
+    assert any(abs(p.trace - 120) <= 4 and abs(p.sample * DT - 8.0) <= 0.6 for p in picks)  # the pipe is still found

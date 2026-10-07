@@ -284,6 +284,43 @@ def report_from_field(request: Request, site: str, payload: dict = Body(...)) ->
     return asdict(report)
 
 
+@router.get("/api/sites/{site}/field_reports")
+def site_field_reports(request: Request, site: str) -> list[dict[str, Any]]:
+    """Every report the crew filed on this site, oldest first."""
+    _site_collection(request, site)
+    reports: list[dict[str, Any]] = []
+    for job in site_map.site_jobs(_dataset_dir(request), site):
+        try:
+            reports += [asdict(r) for r in field_reports.load_reports(job)]
+        except ValueError:
+            continue  # flagged on the dig map's needs-attention list
+    return sorted(reports, key=lambda r: r["reported_at"])
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+@router.post("/api/sites/{site}/confirm")
+def confirm_suggestion(request: Request, site: str, payload: dict = Body(...)) -> dict[str, Any]:  # noqa: B008
+    """A supervisor confirms a suggested target from the field map; it joins the dig map."""
+    _site_collection(request, site)
+    try:
+        review = dig_map.confirm_suggestion(
+            _dataset_dir(request), site, str(payload.get("target_id", "")), identity=str(payload.get("identity", "")),
+            material=str(payload.get("material", "")), reviewer=str(payload.get("reviewer", "")),
+            note=str(payload.get("note", "")), seen_trace=_number(payload.get("trace")),
+            seen_time_ns=_number(payload.get("time_ns")),
+            acknowledge_near_surface=payload.get("acknowledge_near_surface") is True)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="no such suggested target on this site") from exc
+    except dig_map.AlreadyDecided as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"review": asdict(review), "dig_item_id": f"{str(payload.get('target_id', '')).split('#')[0]}#{review.id}"}
+
+
 @router.get("/api/sites/{site}/dig.csv")
 def dig_csv(request: Request, site: str, include_interpreted: bool = False, antenna_offset_m: float = 0.15) -> Response:
     items, attention = _dig(request, site, include_interpreted, antenna_offset_m)

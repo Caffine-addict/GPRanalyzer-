@@ -14,6 +14,7 @@ Measured, not assumed (docs/EXTERNAL_DATA.md):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import cv2
@@ -21,14 +22,39 @@ import numpy as np
 
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS, migrate, remove_background
 
+logger = logging.getLogger(__name__)
 DEFAULT_PICKS = 15
 # Migration leaves faint copies ("smiles") beneath a strong target. A pick below a stronger one,
 # within this lateral reach and weaker than this fraction of it, is taken as such an echo.
 SHADOW_REACH_M = 0.5
 SHADOW_RATIO = 0.3
 _PEAK_OVER_MEDIAN = 3.0
-_SKIP_TOP_NS = 1.0  # direct wave and antenna ringing
+_SKIP_TOP_NS = 1.0  # from the record start: before the direct wave, nothing is in the ground yet
+# The direct wave's own lobe. Measured on the 23 company operator tags: skipping 0.5 ns below time
+# zero loses none of them; 1.0 ns loses one, 1.5 ns four (operators tag very shallow targets).
+SKIP_BELOW_TIME_ZERO_NS = 0.5
+NEAR_SURFACE_NS = 1.5  # shallower than this a pick may still be the direct wave or surface clutter
+_TIME_ZERO_SPREAD_NS = 1.0
 _SKIP_BOTTOM_FRACTION = 0.1  # migration edge, where the spreading gain blows up
+
+
+def time_zero_ns(traces: np.ndarray, sample_interval_ns: float) -> float:
+    """When the direct wave arrives: the median over traces of each one's strongest early lobe.
+
+    Per-trace, not on the mean trace: the direct wave is in every trace at the same time, while a
+    strong shallow target only dominates the few traces above it, so the median ignores it. A wide
+    spread means no consistent direct wave was found; it is logged rather than trusted silently.
+    """
+    # On the envelope, not |amplitude|: the direct wave has several lobes of similar size, and a
+    # per-trace argmax hops between them (1.5-2 ns of spread on the company's mid channel).
+    data = _envelope(np.asarray(traces, dtype=np.float64).T).T
+    early = data[:, : max(1, data.shape[1] // 4)]
+    arrivals = np.argmax(early, axis=1) * sample_interval_ns
+    q1, q3 = np.percentile(arrivals, [25, 75])
+    if q3 - q1 > max(_TIME_ZERO_SPREAD_NS, 5 * sample_interval_ns):  # a lobe's width on coarse channels
+        logger.warning("time zero uncertain: direct-wave arrivals spread %.1f ns across traces", q3 - q1)
+    return float(np.median(arrivals))
+
 
 
 @dataclass(frozen=True)
@@ -73,7 +99,8 @@ def pick_targets(
     migrated = migrate(data, trace_spacing_m=trace_spacing_m, sample_interval_ns=sample_interval_ns,
                        velocity_m_per_ns=velocity, aperture_traces=max(1, int(aperture_m / trace_spacing_m)))
     env = (_envelope(migrated) * (np.arange(migrated.shape[0])[:, None] + 1)).astype(np.float32)
-    env[: int(_SKIP_TOP_NS / sample_interval_ns)] = 0
+    zero = time_zero_ns(traces, sample_interval_ns)
+    env[: int(max(_SKIP_TOP_NS, zero + SKIP_BELOW_TIME_ZERO_NS) / sample_interval_ns)] = 0
     env[int((1 - _SKIP_BOTTOM_FRACTION) * len(env)):] = 0
     positive = env[env > 0]
     if positive.size == 0:

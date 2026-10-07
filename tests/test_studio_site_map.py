@@ -89,3 +89,42 @@ def test_a_site_puts_its_lines_targets_and_pipe_on_the_map(monkeypatch: pytest.M
     evidence = collection["metadata"]["runs_evidence"]
     assert set(evidence) == {"runs", "chance_mean", "p_chance", "verdict"}
     assert all(r["properties"]["evidence"] == evidence["verdict"] for r in runs)
+
+
+# ---------------------------------------------------------------- header dielectric of 1.00 (air), 2026-10-07
+
+from core.contracts import ScanFrame
+from studio import session
+
+
+@pytest.mark.parametrize(("header", "usable"), [(1.0, None), (1.9, None), (None, None), (2.0, 2.0), (9.0, 9.0)])
+def test_a_header_dielectric_below_any_soil_is_treated_as_unset(header: float | None, usable: float | None) -> None:
+    frame = ScanFrame(source_type="t", provenance={}, traces=np.zeros((4, 8)), sample_interval_ns=0.1,
+                      trace_spacing_m=0.025, dielectric_assumed=header)
+    assert session.usable_dielectric(frame) == usable
+    assert (session.describe_channel(frame, "RAD").max_depth_m is None) == (usable is None)  # no air-speed depth axis
+
+
+def test_a_site_without_a_usable_header_measures_its_own_soil(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    dataset = tmp_path / "Lines"
+    dataset.mkdir()
+    for k in range(3):  # synthetic lines at 0.1 m/ns (dielectric 9), no dielectric in their headers
+        imports.import_line(dataset, f"Site_L{k}", _line_with_gps(east_m=1.0 * k, pipe_north_m=4.0))
+    value, basis = site_map.site_dielectric(dataset, "Site")
+    assert "header unusable" in basis
+    meta = site_map.site_geojson(dataset, "Site")["metadata"]["dielectric"]
+    assert meta["value"] == pytest.approx(value, abs=0.01) and meta["lines_with_unusable_header"]
+
+
+@pytest.mark.parametrize(("headers", "expected"), [((9.0, 9.0, 9.0), 9.0), ((9.0, 1.0, 9.0), None), ((9.0, 6.0, 9.0), None),
+                                                  ((None, None, None), None)])
+def test_a_line_trusts_its_header_only_when_every_channel_agrees(monkeypatch: pytest.MonkeyPatch,
+                                                                 headers: tuple, expected: float | None) -> None:
+    # one ground under all channels: a disagreeing or air channel means no header value is trusted for the line
+    channels = [type("C", (), {"extension": ext})() for ext in ("RAD", "RA1", "RA2")]
+    frames = {ext: ScanFrame(source_type="t", provenance={}, traces=np.zeros((4, 8)), sample_interval_ns=0.1,
+                             trace_spacing_m=0.025, dielectric_assumed=h) for ext, h in zip(("RAD", "RA1", "RA2"), headers)}
+    monkeypatch.setattr(session, "available_channels", lambda _job: channels)
+    monkeypatch.setattr(session, "load_frame", lambda _job, ext: frames[ext])
+    assert session.line_dielectric(Path("x")) == expected

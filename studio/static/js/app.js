@@ -9,6 +9,7 @@ import * as api from "./api.js";
 import * as ascan from "./ascan.js";
 import * as docks from "./docks.js";
 import * as documents from "./documents.js";
+import * as fieldMode from "./field_mode.js";
 import * as importDialog from "./import_dialog.js";
 import * as info from "./panel_info.js";
 import * as interact from "./interact.js";
@@ -298,6 +299,45 @@ function centreOn(pick) {
   });
 }
 
+/* ---------- modes ---------- */
+
+const MODE_KEY = "gpr-mode";
+
+/* Interpret is the radargram workstation; Field is the whole site on the map. The mode lives in the
+ * URL and in local storage, so a link or a reload comes back to the same place. */
+function setMode(mode) {
+  const next = mode === "field" ? "field" : "interpret";
+  document.body.dataset.mode = next;
+  for (const button of document.querySelectorAll(".mode-switch .mode")) {
+    const on = button.dataset.mode === next;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-selected", String(on));
+  }
+  try { window.localStorage.setItem(MODE_KEY, next); } catch { /* not remembered */ }
+  const query = new URLSearchParams(window.location.search);
+  if (next === "field") query.set("mode", "field");
+  else query.delete("mode");
+  window.history.replaceState(null, "", query.toString() ? `?${query}` : window.location.pathname);
+  if (next === "field") fieldMode.show();
+  else handleResize();
+}
+
+/** From the field map to the radargram: open the line and channel, centred on the target. */
+async function openAt(job, channel, chainageM) {
+  setMode("interpret");
+  if (getState().job !== job) await openJob(job);
+  if (channel && channel !== getState().channel && getState().jobDetail?.channels.some((c) => c.extension === channel)) {
+    selectChannel(channel);
+  }
+  setView("radargram");
+  const state = getState();
+  const active = activeChannel(state);
+  if (!active || chainageM == null) return;
+  const plot = view.plotRect();
+  setState({ view: { ...state.view, originTrace: chainageM / active.trace_spacing_m - plot.w / (2 * state.view.scaleX) } });
+  syncLocation();
+}
+
 /* ---------- rendering ---------- */
 
 function renderToolbar(state) {
@@ -488,6 +528,10 @@ function installMenus() {
 
 async function boot() {
   modal.init();
+  fieldMode.init({ openAt });
+  for (const button of document.querySelectorAll(".mode-switch .mode")) {
+    button.addEventListener("click", () => setMode(button.dataset.mode));
+  }
   installMenus();
   docks.init({ onOpenJob: openJob, onSelectChannel: selectChannel });
   docks.initAccordions();
@@ -556,6 +600,9 @@ async function boot() {
   documents.render();
 
   const requested = new URLSearchParams(window.location.search);
+  let savedMode = null;
+  try { savedMode = window.localStorage.getItem(MODE_KEY); } catch { /* none */ }
+  setMode(requested.get("mode") ?? (requested.get("job") ? "interpret" : savedMode) ?? "interpret");
   const deepLink = requested.get("job");
   if (deepLink && jobs.includes(deepLink)) {
     await openJob(deepLink);

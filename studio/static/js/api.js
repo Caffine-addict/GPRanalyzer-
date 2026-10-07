@@ -158,3 +158,7 @@ export const fieldViewUrl = (name) => `/field?site=${encodeURIComponent(name)}`;
 export const reportFromField = (name, report) => request(`${site(name)}/field_reports`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report),
 });
+export const siteFieldReports = (name) => request(`${site(name)}/field_reports`);
+export const confirmSuggestion = (name, body) => request(`${site(name)}/confirm`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});

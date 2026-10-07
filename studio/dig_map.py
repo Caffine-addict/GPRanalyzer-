@@ -42,6 +42,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from core import boxes as box_store
 from detect.channel_fusion import time_zero_ns
+from detect.migration_picker import NEAR_SURFACE_NS
 from studio import candidates as candidate_store
 from studio import field_reports, session, site_map
 from studio import picks as pick_store
@@ -70,6 +71,8 @@ class DigItem:
     decided_at: str
     depth_basis: str
     note: str = ""
+    channel: str = ""  # the radargram channel the decision was made on
+    near_surface: bool = False  # within NEAR_SURFACE_NS of the direct wave: may be the surface, check it
     field_outcome: str = ""  # the crew's latest report: found / not_found / dug, or empty
     field_report: str = ""  # who reported it, when, and any depth measured in the hole
 
@@ -92,6 +95,7 @@ class _Line:
     channels: dict[str, session.ChannelInfo]
     placed: site_map.PlacedLine
     horizontal_error_m: float
+    fallback_dielectric: tuple[float, str] | None = None  # the site's, for a header that cannot describe ground
 
 
 def _channel(line: _Line, name: str) -> session.ChannelInfo:
@@ -104,21 +108,23 @@ def _channel(line: _Line, name: str) -> session.ChannelInfo:
     return info
 
 
-def _depth(line: _Line, info: session.ChannelInfo, sample: float, velocity: float) -> float:
+def _depth(line: _Line, info: session.ChannelInfo, sample: float, velocity: float) -> tuple[float, bool]:
+    """(depth, near the surface) of an apex at a raw sample index."""
     frame = session.load_frame(line.job_dir, info.extension)
     apex_ns = sample * info.sample_interval_ns - time_zero_ns(session.raw_traces(frame), info.sample_interval_ns)
     if apex_ns <= 0:
         raise _Unplaceable("its time is above the direct wave (time zero), so no depth exists")
-    return velocity * apex_ns / 2
+    return velocity * apex_ns / 2, apex_ns < NEAR_SURFACE_NS
 
 
 def _pick_item(line: _Line, pick: pick_store.Pick, *, status: str, decided_by: str, decided_at: str,
                identity: str, material: str, item_id: str, note: str = "") -> DigItem:
     info = _channel(line, pick.channel)
-    depth = _depth(line, info, pick.sample, pick.velocity_m_per_ns)
+    depth, near = _depth(line, info, pick.sample, pick.velocity_m_per_ns)
     relative = FITTED_DEPTH_RELATIVE_ERROR if pick.velocity_source == "fitted" else site_map.DEPTH_RELATIVE_ERROR
-    return _item(line, info, pick.trace, depth, relative, status=status, decided_by=decided_by, decided_at=decided_at,
-                 identity=identity, material=material, item_id=item_id, basis=f"velocity {pick.velocity_source}", note=note)
+    return replace(_item(line, info, pick.trace, depth, relative, status=status, decided_by=decided_by, decided_at=decided_at,
+                         identity=identity, material=material, item_id=item_id, basis=f"velocity {pick.velocity_source}",
+                         note=note), near_surface=near)
 
 
 def _review_item(line: _Line, review: review_store.Review) -> DigItem:
@@ -136,19 +142,21 @@ def _review_item(line: _Line, review: review_store.Review) -> DigItem:
     if box.detector != candidate_store.MIGRATION_DETECTOR:
         raise _Unplaceable("its box does not mark a known apex position; place a pick on the hyperbola and confirm that")
     info = _channel(line, review.channel)
-    frame = session.load_frame(line.job_dir, info.extension)
-    dielectric = frame.dielectric_assumed or _DEFAULT_DIELECTRIC
+    header = session.line_dielectric(line.job_dir)
+    dielectric, basis = (header, f"header dielectric {header:g}") if header else (
+        line.fallback_dielectric or (_DEFAULT_DIELECTRIC, "default 9"))
     apex_sample = box.y + candidate_store.BOX_ABOVE_NS / info.sample_interval_ns
-    depth = _depth(line, info, apex_sample, SPEED_OF_LIGHT_M_PER_NS / math.sqrt(dielectric))
-    return _item(line, info, box.x + box.w / 2, depth, site_map.DEPTH_RELATIVE_ERROR,
-                 basis=f"assumed dielectric {dielectric:g}", **common)
+    depth, near = _depth(line, info, apex_sample, SPEED_OF_LIGHT_M_PER_NS / math.sqrt(dielectric))
+    return replace(_item(line, info, box.x + box.w / 2, depth, site_map.DEPTH_RELATIVE_ERROR,
+                         basis=basis if header else f"{basis}: {dielectric:.1f}", **common), near_surface=near)
 
 
 def _item(line: _Line, info: session.ChannelInfo, trace: float, depth: float, relative: float, *, status: str,
           decided_by: str, decided_at: str, identity: str, material: str, item_id: str, basis: str,
           note: str = "") -> DigItem:
     lat, lon = line.placed.at(trace)
-    return DigItem(id=item_id, status=status, job=line.job, lat=lat, lon=lon, horizontal_error_m=line.horizontal_error_m,
+    return DigItem(id=item_id, status=status, job=line.job, channel=info.extension, lat=lat, lon=lon,
+                   horizontal_error_m=line.horizontal_error_m,
                    chainage_m=trace * info.trace_spacing_m, line_start=line.placed.at(0), depth_m=depth,
                    depth_error_m=relative * depth + site_map.DEPTH_FLOOR_ERROR_M, identity=identity, material=material,
                    decided_by=decided_by, decided_at=decided_at, depth_basis=basis, note=note)
@@ -177,6 +185,78 @@ def _standing_confirmations(job: str, reviews: list[review_store.Review], attent
     return standing
 
 
+MATCH_POSITION_M = 0.3
+MATCH_TIME_NS = 1.5
+
+
+class AlreadyDecided(ValueError):
+    """The target already carries a supervisor decision; change it in Interpret › Review instead."""
+
+
+def confirm_suggestion(dataset_dir: Path, site: str, target_id: str, *, identity: str, material: str,
+                       reviewer: str, note: str = "", seen_trace: float | None = None,
+                       seen_time_ns: float | None = None, acknowledge_near_surface: bool = False) -> review_store.Review:
+    """A supervisor puts a site-map suggestion on the dig map, without the reasoning layer.
+
+    The suggestion (`<job>#T<n>`, one target merged across channels) is tied back to the stored
+    migration-picker box it came from: same line, a channel that saw it, within 0.3 m and 1.5 ns.
+    The confirmation goes through the ordinary review record, named and timestamped, so the dig
+    map, its audit trail and the training export treat it like any other confirmed claim.
+
+    Suggestion ids are ranks, so the caller says where the suggestion it looked at was
+    (`seen_trace`, `seen_time_ns`); if the server's suggestion of that id has moved since, nothing is
+    confirmed. A near-surface suggestion needs `acknowledge_near_surface`, and a target that already
+    carries a decision is refused rather than silently overridden.
+    """
+    if not reviewer.strip():
+        raise ValueError("a confirmation needs the supervisor's name")
+    if not identity.strip():
+        raise ValueError("say what it is (e.g. 'water pipe', 'unknown utility')")
+    job, _, ref = target_id.partition("#")
+    if job not in site_map.site_jobs(dataset_dir, site) or not ref.startswith("T"):
+        raise KeyError(target_id)
+    job_dir = session.resolve_job(job, dataset_dir)
+    suggestion = next((f["properties"] for f in site_map.site_geojson(dataset_dir, site)["features"]
+                       if f["properties"].get("id") == target_id), None)
+    if suggestion is None or suggestion.get("time_ns") is None:
+        raise KeyError(target_id)
+    if seen_trace is None or seen_time_ns is None:
+        raise ValueError("say which suggestion you looked at (its trace and time)")
+    spacing = session.available_channels(job_dir)[0].trace_spacing_m
+    if (abs(suggestion["trace"] - seen_trace) * spacing > MATCH_POSITION_M / 3
+            or abs(suggestion["time_ns"] - seen_time_ns) > MATCH_TIME_NS / 3):
+        raise ValueError("the suggestions have changed since you opened them; reload the site and check it again")
+    if suggestion.get("near_surface") and not acknowledge_near_surface:
+        raise ValueError("this suggestion is near the surface; check its radargram and tick that you have")
+    candidate_store.ensure_candidates(job, job_dir)
+    channels = {c.extension: c for c in session.available_channels(job_dir)}
+    best = None
+    for box in box_store.load_boxes(job):
+        info = channels.get(box.channel)
+        if (box.detector != candidate_store.MIGRATION_DETECTOR or info is None or box.channel not in suggestion["channels"]
+                or box.y <= 0):  # a box clipped at the record top no longer marks where its apex is
+            continue
+        frame = session.load_frame(job_dir, box.channel)
+        apex_ns = (box.y * info.sample_interval_ns + candidate_store.BOX_ABOVE_NS
+                   - time_zero_ns(session.raw_traces(frame), info.sample_interval_ns))
+        dx = abs(box.x + box.w / 2 - suggestion["trace"]) * info.trace_spacing_m
+        dt = abs(apex_ns - suggestion["time_ns"])
+        if dx <= MATCH_POSITION_M and dt <= MATCH_TIME_NS and (best is None or dx + dt / 10 < best[0]):
+            best = (dx + dt / 10, box)
+    if best is None:
+        raise ValueError("the suggestion no longer matches a stored candidate; reopen the site to refresh it")
+    box = best[1]
+    decided = [r for r in review_store.load_reviews(job) if r.target_id == box.id and r.status != "proposed"]
+    if decided:
+        last = decided[-1]
+        raise AlreadyDecided(f"already {last.status} by {last.reviewer} as '{last.identity}'; change it in Interpret › Review")
+    (proposed,) = review_store.propose(job, [{
+        "channel": box.channel, "target_id": box.id, "target_kind": "candidate", "x": box.x, "y": box.y, "w": box.w,
+        "h": box.h, "identity": identity.strip(), "material": material.strip(), "confidence": "supervisor",
+        "why": f"confirmed from the field map ({target_id})", "layer": "field map", "model": "supervisor"}])
+    return review_store.decide(job, proposed.id, "confirmed", reviewer, note)
+
+
 def dig_items(dataset_dir: Path, site: str, *, include_interpreted: bool = False,
               antenna_offset_uncertainty_m: float = 0.15) -> tuple[list[DigItem], list[Attention]]:
     """The site's dig items, and every decision that could not be placed, with its reason."""
@@ -199,7 +279,8 @@ def dig_items(dataset_dir: Path, site: str, *, include_interpreted: bool = False
             attention.append(Attention(job, "", "the line has no usable GPS; mark its items by tape from the line start"))
             continue
         horizontal = math.sqrt(placed.gps_jitter_m**2 + site_map.PICK_POSITION_ERROR_M**2 + antenna_offset_uncertainty_m**2)
-        line = _Line(job, job_dir, channels, placed, horizontal)
+        fallback = None if session.line_dielectric(job_dir) else site_map.site_dielectric(dataset_dir, site)
+        line = _Line(job, job_dir, channels, placed, horizontal, fallback)
         for r in reviews:
             try:
                 items.append(_review_item(line, r))
@@ -231,7 +312,7 @@ def _with_outcome(item: DigItem, report: field_reports.FieldReport | None) -> Di
 
 def to_geojson(site: str, items: list[DigItem], attention: list[Attention]) -> dict[str, Any]:
     features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [round(i.lon, 8), round(i.lat, 8)]},
-                 "properties": {"kind": "dig_item", "id": i.id, "status": i.status, "line": i.job,
+                 "properties": {"kind": "dig_item", "id": i.id, "status": i.status, "line": i.job, "channel": i.channel,
                                 "chainage_m": round(i.chainage_m, 2),
                                 "line_start": [round(i.line_start[1], 8), round(i.line_start[0], 8)],
                                 "horizontal_error_m": round(i.horizontal_error_m, 2),
@@ -240,7 +321,8 @@ def to_geojson(site: str, items: list[DigItem], attention: list[Attention]) -> d
                                                   round(i.depth_m + i.depth_error_m, 2)],
                                 "depth_basis": i.depth_basis, "identity": i.identity, "material": i.material,
                                 "decided_by": i.decided_by, "decided_at": i.decided_at, "note": i.note,
-                                "field_outcome": i.field_outcome, "field_report": i.field_report}}
+                                "field_outcome": i.field_outcome, "field_report": i.field_report,
+                                "near_surface": i.near_surface}}
                 for i in items]
     return {"type": "FeatureCollection", "features": features,
             "metadata": {"site": site, "items": len(items),

@@ -46,6 +46,10 @@
     <button class="menu" data-menu="view">View</button>
     <button class="menu" data-menu="tools">Tools</button>
   </nav>
+  <div class="mode-switch" role="tablist" aria-label="Mode">
+    <button class="mode" role="tab" data-mode="interpret" title="The radargram workstation: process, pick, measure, review"><svg class="i"><use href="#i-scan"/></svg><span>Interpret</span></button>
+    <button class="mode" role="tab" data-mode="field" title="The whole site on the map: dig items, crew reports, downloads"><svg class="i"><use href="#i-map"/></svg><span>Field</span></button>
+  </div>
   <div class="menubar-right">
     <span class="job-badge" id="jobBadge">no line open</span>
   </div>
@@ -195,6 +199,15 @@
     </div>
   </aside>
 
+</main>
+
+<main class="field-workspace" id="fieldWorkspace" aria-label="Field mode">
+  <aside class="fpanel fpanel-left" id="fieldLeft"></aside>
+  <section class="fcentre">
+    <div id="fieldMap"></div>
+    <div class="ftable-wrap" id="fieldTable"></div>
+  </section>
+  <aside class="fpanel fpanel-right" id="fieldRight" aria-live="polite"></aside>
 </main>
 
 <div class="modal-backdrop" id="modalBackdrop" hidden>

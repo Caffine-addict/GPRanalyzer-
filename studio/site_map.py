@@ -32,10 +32,11 @@ from typing import Any
 import numpy as np
 
 from detect.channel_fusion import ChannelPicks, fuse, time_zero_ns
-from detect.migration_picker import pick_targets
+from detect.migration_picker import NEAR_SURFACE_NS, pick_targets
 from studio import gps_georef, session
 from studio import picks as pick_store
-from studio.processing import SPEED_OF_LIGHT_M_PER_NS
+from studio.processing import SPEED_OF_LIGHT_M_PER_NS, remove_background
+from studio.velocity import semblance_curve, stacked_permittivity
 
 PICK_POSITION_ERROR_M = 0.05
 DEPTH_RELATIVE_ERROR = 0.15
@@ -83,6 +84,7 @@ class SiteTarget:
     channels: tuple[str, ...]
     origin: str  # "suggested" (detector) or "interpreted" (a person's pick)
     depth_basis: str
+    time_ns: float | None = None  # two-way time from time zero: what ties a suggestion back to its box
 
 
 def site_of(job: str) -> str:
@@ -114,38 +116,84 @@ def place_line(job: str, job_dir: Path, trace_spacing_m: float) -> PlacedLine | 
 
 
 @lru_cache(maxsize=256)
-def _detected(job_dir_str: str, _mtime_ns: int) -> tuple[tuple[float, float, tuple[str, ...], float], ...]:
-    """(trace, time from time zero, channels, dielectric) of the line's merged targets, cached per file state."""
+def _detected(job_dir_str: str, _mtime_ns: int) -> tuple[tuple[float, float, tuple[str, ...], float | None], ...]:
+    """(trace, time from time zero, channels, header dielectric or None) of the line's merged targets.
+
+    Cached per file state. Picking migrates at the header's dielectric when it can describe ground,
+    else at the default; the header value goes back so depth can use a measured one instead.
+    """
     job_dir = Path(job_dir_str)
     channels: dict[str, ChannelPicks] = {}
-    spacing, dielectric = None, _DEFAULT_DIELECTRIC
+    spacing, header = None, session.line_dielectric(job_dir)
     for info in session.available_channels(job_dir):
         frame = session.load_frame(job_dir, info.extension)
         traces = session.raw_traces(frame)
-        dielectric = frame.dielectric_assumed or _DEFAULT_DIELECTRIC
         spacing = info.trace_spacing_m
         channels[info.extension] = ChannelPicks(
-            pick_targets(traces, sample_interval_ns=info.sample_interval_ns, trace_spacing_m=spacing, dielectric=dielectric),
+            pick_targets(traces, sample_interval_ns=info.sample_interval_ns, trace_spacing_m=spacing,
+                         dielectric=header or _DEFAULT_DIELECTRIC),
             info.sample_interval_ns, time_zero_ns(traces, info.sample_interval_ns))
     if not channels or spacing is None:
         return ()
-    return tuple((t.trace, t.time_ns, t.channels, dielectric) for t in fuse(channels, spacing)[:TARGETS_PER_LINE])
+    return tuple((t.trace, t.time_ns, t.channels, header) for t in fuse(channels, spacing)[:TARGETS_PER_LINE])
+
+
+ARCHES_PER_LINE = 8
+
+
+@lru_cache(maxsize=256)
+def _semblance_curves(job_dir_str: str, _mtime_ns: int) -> tuple[tuple[float, ...], ...]:
+    """Semblance-versus-permittivity of the line's strongest arches, on its first channel."""
+    job_dir = Path(job_dir_str)
+    info = session.available_channels(job_dir)[0]
+    frame = session.load_frame(job_dir, info.extension)
+    traces = session.raw_traces(frame)
+    dt, spacing = info.sample_interval_ns, info.trace_spacing_m
+    zero = round(time_zero_ns(traces, dt) / dt)
+    data = remove_background(np.asarray(traces, dtype=np.float64).T[zero:], "mean", 0)
+    picks = pick_targets(traces, sample_interval_ns=dt, trace_spacing_m=spacing,
+                         dielectric=session.usable_dielectric(frame) or _DEFAULT_DIELECTRIC, max_picks=ARCHES_PER_LINE)
+    return tuple(tuple(float(v) for v in semblance_curve(data, apex_trace=p.trace, apex_sample=p.sample - zero,
+                                                         trace_spacing_m=spacing, sample_interval_ns=dt))
+                 for p in picks if p.sample > zero)
+
+
+def _mtime(job_dir: Path) -> int:
+    return max(p.stat().st_mtime_ns for p in job_dir.iterdir())
+
+
+def site_dielectric(dataset_dir: Path, site: str) -> tuple[float, str]:
+    """The site's permittivity measured from its own hyperbolas, for lines whose header is unusable.
+
+    Semblance summed over every clearly peaked arch on the site (studio/velocity.stacked_permittivity:
+    a median 22% error on 116 excavated Twente surveys). Falls back to the default 9, saying so.
+    """
+    curves = []
+    for job in site_jobs(dataset_dir, site):
+        job_dir = session.resolve_job(job, dataset_dir)
+        curves += [np.array(c) for c in _semblance_curves(str(job_dir), _mtime(job_dir))]
+    measured = stacked_permittivity(curves)
+    if measured is None:
+        return _DEFAULT_DIELECTRIC, "default 9 (header unusable; too few clear arches to measure the site)"
+    return measured, f"measured on this site ({len(curves)} arches; header unusable)"
 
 
 def line_targets(job: str, job_dir: Path, line: PlacedLine, antenna_offset_uncertainty_m: float,
-                 n_traces: int) -> list[SiteTarget]:
+                 n_traces: int, fallback: tuple[float, str] | None = None) -> list[SiteTarget]:
+    """`fallback` is the site's (dielectric, basis) for a line whose header cannot describe ground."""
     horizontal = math.sqrt(line.gps_jitter_m**2 + PICK_POSITION_ERROR_M**2 + antenna_offset_uncertainty_m**2)
     mtime = max(p.stat().st_mtime_ns for p in job_dir.iterdir())
     edge = LINE_EDGE_M / line.trace_spacing_m
     found = []
-    for k, (trace, time_ns, channels, dielectric) in enumerate(_detected(str(job_dir), mtime)):
+    for k, (trace, time_ns, channels, header) in enumerate(_detected(str(job_dir), mtime)):
         if time_ns <= 0 or trace < edge or trace > n_traces - 1 - edge:
             continue
+        dielectric, basis = (header, f"header dielectric {header:g}") if header else (fallback or (_DEFAULT_DIELECTRIC, "default 9"))
         depth = SPEED_OF_LIGHT_M_PER_NS / math.sqrt(dielectric) * time_ns / 2
         lat, lon = line.at(trace)
         found.append(SiteTarget(f"{job}#T{k + 1}", job, trace, lat, lon, depth,
                                 DEPTH_RELATIVE_ERROR * depth + DEPTH_FLOOR_ERROR_M, horizontal, channels,
-                                "suggested", f"assumed dielectric {dielectric:g}"))
+                                "suggested", f"{basis}: {dielectric:.1f}" if not header else basis, time_ns))
     for pick in pick_store.load_picks(job):
         lat, lon = line.at(pick.trace)
         relative = 0.05 if pick.velocity_source == "fitted" else DEPTH_RELATIVE_ERROR
@@ -300,7 +348,10 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
     targets: list[SiteTarget] = []
     placed: list[PlacedLine] = []
     lengths: dict[str, int] = {}
-    for job in site_jobs(dataset_dir, site):
+    jobs = site_jobs(dataset_dir, site)
+    unusable = [job for job in jobs if session.line_dielectric(session.resolve_job(job, dataset_dir)) is None]
+    fallback = site_dielectric(dataset_dir, site) if unusable else None
+    for job in jobs:
         job_dir = session.resolve_job(job, dataset_dir)
         info = session.available_channels(job_dir)[0]
         line = place_line(job, job_dir, info.trace_spacing_m)
@@ -314,7 +365,7 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
                                         "gps_jitter_m": round(line.gps_jitter_m, 3), "start": _point(*ends[0])}})
         placed.append(line)
         lengths[job] = info.n_traces
-        found = line_targets(job, job_dir, line, antenna_offset_uncertainty_m, info.n_traces)
+        found = line_targets(job, job_dir, line, antenna_offset_uncertainty_m, info.n_traces, fallback)
         targets += found
         for t in found:
             features.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": _point(t.lat, t.lon)},
@@ -323,7 +374,10 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
                                             "depth_m": round(t.depth_m, 2), "depth_error_m": round(t.depth_error_m, 2),
                                             "depth_basis": t.depth_basis,
                                             "horizontal_error_m": round(t.horizontal_error_m, 2),
-                                            "channels": list(t.channels), "corroboration": len(t.channels)}})
+                                            "channels": list(t.channels), "corroboration": len(t.channels),
+                                            "trace": round(t.trace, 1),
+                                            "near_surface": t.time_ns is not None and t.time_ns < NEAR_SURFACE_NS,
+                                            "time_ns": None if t.time_ns is None else round(t.time_ns, 2)}})
     runs = _runs(placed, targets)
     evidence = _run_evidence(placed, lengths, targets, len(runs))
     for k, run in enumerate(runs):
@@ -339,6 +393,8 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
                                                             if f["properties"]["kind"] == "survey_line"}),
                          "lines_not_placed": unplaced,
                          "antenna_offset_uncertainty_m": antenna_offset_uncertainty_m,
+                         "dielectric": None if fallback is None else {
+                             "value": round(fallback[0], 2), "basis": fallback[1], "lines_with_unusable_header": unusable},
                          "runs_evidence": evidence,
                          "note": ("Suggested targets are detector output for review; only supervisor-confirmed targets "
                                   "are dig-grade. Errors are one-sigma estimates; phone GPS (3-5 m) only finds the area.")}}

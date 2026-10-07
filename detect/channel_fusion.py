@@ -13,18 +13,18 @@ index by 5 ns.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from detect.migration_picker import Pick, _envelope
+from detect.migration_picker import (  # noqa: F401 - time zero is part of this module's contract
+    Pick,
+    time_zero_ns,
+)
 
 POSITION_TOLERANCE_M = 0.3
 TIME_TOLERANCE_NS = 1.5
-_TIME_ZERO_SPREAD_NS = 1.0
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,24 +41,6 @@ class Target:
     channels: tuple[str, ...]  # every channel that saw it, shallow to deep
     members: tuple[tuple[str, Pick], ...]
     score: float  # summed strength over its channels
-
-
-def time_zero_ns(traces: np.ndarray, sample_interval_ns: float) -> float:
-    """When the direct wave arrives: the median over traces of each one's strongest early lobe.
-
-    Per-trace, not on the mean trace: the direct wave is in every trace at the same time, while a
-    strong shallow target only dominates the few traces above it, so the median ignores it. A wide
-    spread means no consistent direct wave was found; it is logged rather than trusted silently.
-    """
-    # On the envelope, not |amplitude|: the direct wave has several lobes of similar size, and a
-    # per-trace argmax hops between them (1.5-2 ns of spread on the company's mid channel).
-    data = _envelope(np.asarray(traces, dtype=np.float64).T).T
-    early = data[:, : max(1, data.shape[1] // 4)]
-    arrivals = np.argmax(early, axis=1) * sample_interval_ns
-    q1, q3 = np.percentile(arrivals, [25, 75])
-    if q3 - q1 > max(_TIME_ZERO_SPREAD_NS, 5 * sample_interval_ns):  # a lobe's width on coarse channels
-        logger.warning("time zero uncertain: direct-wave arrivals spread %.1f ns across traces", q3 - q1)
-    return float(np.median(arrivals))
 
 
 def fuse(channels: Mapping[str, ChannelPicks], trace_spacing_m: float) -> list[Target]:
