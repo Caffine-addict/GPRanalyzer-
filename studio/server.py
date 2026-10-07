@@ -67,7 +67,7 @@ async def revalidate_the_app(request: Request, call_next):  # type: ignore[no-un
     ETag, so an unchanged file costs a 304, not a download.
     """
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    if request.url.path in ("/", "/field") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -142,6 +142,12 @@ def _processed(job_dir: Path, extension: str, processing: dict[str, Any]):
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     return HTMLResponse((_STATIC_DIR / "index.html").read_text())
+
+
+@app.get("/field", response_class=HTMLResponse)
+def field_view() -> HTMLResponse:
+    """Field mode on a phone: walk to each dig item, record what was found (studio/static/js/field.js)."""
+    return HTMLResponse((_STATIC_DIR / "field.html").read_text())
 
 
 @app.get("/api/palettes")

@@ -16,7 +16,7 @@ from fastapi.responses import Response
 
 from reference import sue_geo
 from studio import candidates as candidate_store
-from studio import dig_map, geo_export, georef, gps_georef, session, site_map
+from studio import dig_map, field_reports, geo_export, georef, gps_georef, session, site_map
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -261,6 +261,27 @@ def dig_geojson(request: Request, site: str, include_interpreted: bool = False, 
     """Only what people decided: supervisor-confirmed items (and, if asked, interpreted picks)."""
     items, attention = _dig(request, site, include_interpreted, antenna_offset_m)
     return _geojson(dig_map.to_geojson(site, items, attention), f"{site}_dig.geojson" if download else None)
+
+
+@router.post("/api/sites/{site}/field_reports")
+def report_from_field(request: Request, site: str, payload: dict = Body(...)) -> dict[str, Any]:  # noqa: B008
+    """The crew's outcome for one dig item: found, not_found or dug."""
+    _site_collection(request, site)
+    item_id = str(payload.get("item_id", ""))
+    job = item_id.split("#", 1)[0]
+    if job not in site_map.site_jobs(_dataset_dir(request), site):
+        raise HTTPException(status_code=404, detail="no such dig item on this site")
+    items, _ = _dig(request, site, True, 0.15)
+    if item_id not in {i.id for i in items}:
+        raise HTTPException(status_code=404, detail="no such dig item on this site (it may have been withdrawn)")
+    try:
+        report = field_reports.add_report(
+            job, item_id=item_id, outcome=str(payload.get("outcome", "")), reporter=str(payload.get("reporter", "")),
+            note=str(payload.get("note", "")), lat=payload.get("lat"), lon=payload.get("lon"),
+            accuracy_m=payload.get("accuracy_m"), depth_found_m=payload.get("depth_found_m"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return asdict(report)
 
 
 @router.get("/api/sites/{site}/dig.csv")

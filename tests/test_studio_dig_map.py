@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core import boxes as box_store
-from studio import candidates, dig_map, imports, session
+from studio import candidates, dig_map, field_reports, imports, session
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -150,3 +150,84 @@ def test_dig_endpoints(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.get("/api/sites/Site/dig.pdf").content.startswith(b"%PDF")
     assert client.get("/api/sites/Nope/dig.geojson").status_code == 404
     assert client.get("/api/sites/Site/dig.geojson", params={"antenna_offset_m": -1}).status_code == 422
+
+
+# ---------------------------------------------------------------- field reports (2026-10-07)
+
+
+def test_a_field_report_is_attached_to_its_dig_item(site: Path) -> None:
+    _confirm("Site_L0", _claim(_pipe_box(site, "Site_L0")))
+    (item,) = dig_map.dig_items(site, "Site")[0]
+    assert item.field_outcome == ""
+    field_reports.add_report("Site_L0", item_id=item.id, outcome="dug", reporter="Crew lead", depth_found_m=0.42,
+                             lat=12.97, lon=77.64, accuracy_m=4.0)
+    (item,) = dig_map.dig_items(site, "Site")[0]
+    assert item.field_outcome == "dug" and "Crew lead" in item.field_report and "0.42 m" in item.field_report
+    row = next(csv.DictReader(io.StringIO(dig_map.to_csv([item], []))))
+    assert row["field_outcome"] == "dug"
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    ({"outcome": "maybe"}, "outcome"), ({"reporter": " "}, "name"), ({"item_id": "Other_L9#R1"}, "belong"),
+    ({"lat": 123.0}, "lat"), ({"accuracy_m": float("nan")}, "accuracy"), ({"depth_found_m": True}, "depth"),
+])
+def test_bad_field_reports_are_refused(site: Path, change: dict, message: str) -> None:
+    report = {"item_id": "Site_L0#R1", "outcome": "found", "reporter": "Crew lead"} | change
+    with pytest.raises(ValueError, match=message):
+        field_reports.add_report("Site_L0", **report)
+
+
+def test_field_view_and_report_endpoint(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from studio.server import app
+
+    _confirm("Site_L0", _claim(_pipe_box(site, "Site_L0")))
+    monkeypatch.setattr(app.state, "dataset_dir", site, raising=False)
+    client = TestClient(app)
+    page = client.get("/field")
+    assert page.status_code == 200 and "field.js" in page.text and page.headers["cache-control"] == "no-cache"
+    item_id = client.get("/api/sites/Site/dig.geojson").json()["features"][0]["properties"]["id"]
+    ok = client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "found", "reporter": "Crew"})
+    assert ok.status_code == 200 and ok.json()["outcome"] == "found"
+    assert client.get("/api/sites/Site/dig.geojson").json()["features"][0]["properties"]["field_outcome"] == "found"
+    assert client.post("/api/sites/Site/field_reports", json={"item_id": "Nope_L1#R1", "outcome": "found",
+                                                              "reporter": "x"}).status_code == 404
+    assert client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "?",
+                                                              "reporter": "x"}).status_code == 422
+    cross = client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "found", "reporter": "x"},
+                        headers={"Sec-Fetch-Site": "cross-site"})
+    assert cross.status_code == 403  # another site open in the phone's browser cannot plant reports
+
+
+def test_a_report_for_an_item_not_on_the_dig_map_is_refused(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from studio.server import app
+
+    _confirm("Site_L0", _claim(_pipe_box(site, "Site_L0")))
+    monkeypatch.setattr(app.state, "dataset_dir", site, raising=False)
+    client = TestClient(app)
+    invented = client.post("/api/sites/Site/field_reports", json={"item_id": "Site_L0#Rmadeup", "outcome": "found",
+                                                                  "reporter": "Crew"})
+    assert invented.status_code == 404
+
+
+def test_reports_on_interpreted_picks_are_accepted_and_shown(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from studio.server import app
+
+    pick = pick_store.add_pick("Site_L1", channel="RD3", trace=PIPE_TRACE, sample=PIPE_SAMPLE, time_ns=8.0,
+                               depth_m=0.4, velocity_m_per_ns=0.1, velocity_source="manual", dielectric=9.0, label="duct")
+    monkeypatch.setattr(app.state, "dataset_dir", site, raising=False)
+    client = TestClient(app)
+    ok = client.post("/api/sites/Site/field_reports", json={"item_id": f"Site_L1#{pick.id}", "outcome": "not_found",
+                                                            "reporter": "Crew"})
+    assert ok.status_code == 200
+    (item,) = dig_map.dig_items(site, "Site", include_interpreted=True)[0]
+    assert (item.status, item.field_outcome) == ("interpreted", "not_found")
+
+
+def test_a_corrupt_reports_file_is_flagged_not_fatal(site: Path) -> None:
+    _confirm("Site_L0", _claim(_pipe_box(site, "Site_L0")))
+    path = field_reports._path("Site_L0")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json")
+    items, attention = dig_map.dig_items(site, "Site")
+    assert len(items) == 1 and items[0].field_outcome == ""
+    assert "unreadable" in attention[0].reason and str(path) not in attention[0].reason

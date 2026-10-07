@@ -145,3 +145,16 @@ export const lineGeojsonUrl = (job) => `/api/jobs/${encodeURIComponent(job)}/geo
 export const vendorGeojsonUrl = () => "/api/geo/vendor.geojson?download=true";
 export const allGeojsonUrl = () => "/api/geo/all.geojson";
 export const exportUrl = (format, scope) => `/api/geo/export.${format}?scope=${encodeURIComponent(scope)}`;
+
+/* ---------- field mode: a whole site on the map, the dig map, the crew's reports ---------- */
+const site = (name) => `/api/sites/${encodeURIComponent(name)}`;
+export const listSites = () => request("/api/sites");
+export const siteGeojson = (name) => request(`${site(name)}/field.geojson`);
+export const digGeojson = (name, includeInterpreted = false) =>
+  request(`${site(name)}/dig.geojson?include_interpreted=${includeInterpreted}`);
+export const siteDownloadUrl = (name) => `${site(name)}/field.geojson?download=true`;
+export const digDownloadUrl = (name, format) => `${site(name)}/dig.${format}${format === "geojson" ? "?download=true" : ""}`;
+export const fieldViewUrl = (name) => `/field?site=${encodeURIComponent(name)}`;
+export const reportFromField = (name, report) => request(`${site(name)}/field_reports`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report),
+});

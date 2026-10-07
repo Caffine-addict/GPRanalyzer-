@@ -23,6 +23,14 @@ let status = "";
 let isError = false;
 let picking = null; // index of the row waiting for a map click
 
+// Field mode: a whole site (lines sharing a name prefix) and its dig map.
+let sites = null;
+let siteName = "";
+let siteField = null;
+let siteDig = null;
+let withInterpreted = false;
+let siteStatus = "";
+
 export function init(handlers) {
   callbacks = handlers;
 }
@@ -141,12 +149,86 @@ function exports(job) {
   ]);
 }
 
+async function loadSites() {
+  try {
+    sites = await api.listSites();
+    // Open the biggest site: the one most worth looking at, not the first alphabetically.
+    if (!siteName && sites.length) siteName = sites.reduce((a, b) => (b.lines > a.lines ? b : a)).site;
+  } catch (error) {
+    sites = [];
+    siteStatus = error.message;
+  }
+  paint();
+}
+
+async function showSite() {
+  siteStatus = "Assembling the site — the first time takes a few seconds per line…";
+  paint();
+  try {
+    [siteField, siteDig] = await Promise.all([api.siteGeojson(siteName), api.digGeojson(siteName, withInterpreted)]);
+    callbacks.onShowMap?.();
+    await mapView.showSite(siteField, siteDig);
+    siteStatus = "";
+  } catch (error) {
+    siteStatus = error.message;
+  }
+  paint();
+}
+
+function siteSummary() {
+  if (!siteField || siteField.metadata.site !== siteName) return null;
+  const m = siteField.metadata;
+  const count = (kind) => siteField.features.filter((f) => f.properties.kind === kind).length;
+  const evidence = m.runs_evidence;
+  const attention = siteDig?.metadata.needs_attention ?? [];
+  return el("div", { class: "readout" }, [
+    el("div", { class: "row" }, [el("span", { text: "lines placed" }), el("span", { text: `${m.lines_placed} of ${m.lines_placed + m.lines_not_placed.length}` })]),
+    el("div", { class: "row" }, [el("span", { text: "targets" }), el("span", { text: String(count("target")) })]),
+    el("div", { class: "row" }, [el("span", { text: "runs" }), el("span", { text: `${evidence.runs} (chance ${evidence.chance_mean})` })]),
+    el("div", { class: `verdict${evidence.verdict.startsWith("runs beat") ? "" : " flag"}`, text: evidence.verdict }),
+    el("div", { class: "row" }, [el("span", { text: "dig items" }), el("span", { text: `${siteDig?.metadata.confirmed ?? 0} confirmed` })]),
+    ...attention.map((a) => el("div", { class: "verdict flag", text: `${a.line}${a.ref ? ` #${a.ref}` : ""}: ${a.reason}` })),
+  ]);
+}
+
+function siteSection() {
+  if (sites === null) {
+    loadSites();
+    return el("p", { class: "panel-note", text: "Looking for sites…" });
+  }
+  if (!sites.length) return el("p", { class: "panel-note", text: "No sites yet: name lines <site>_<line> (e.g. Set1_LINE001) and they group into a site." });
+  return el("div", { class: "export-list" }, [
+    el("div", { class: "interp-label", text: "Field mode — a whole site" }),
+    el("select", { onchange: (event) => { siteName = event.target.value; siteField = null; siteDig = null; paint(); } },
+      sites.map((s) => el("option", { value: s.site, text: `${s.site} · ${s.lines} lines`, selected: s.site === siteName }))),
+    el("label", { class: "check" }, [
+      el("input", { type: "checkbox", checked: withInterpreted, onchange: (event) => { withInterpreted = event.target.checked; } }),
+      el("span", { text: "Include interpreter picks not yet confirmed" }),
+    ]),
+    el("div", { class: "btn-row" }, [
+      el("button", { class: "btn primary", text: "Show site on the map", onclick: showSite }),
+      el("a", { class: "btn", href: api.fieldViewUrl(siteName), target: "_blank", rel: "noopener", text: "Open field view ↗" }),
+    ]),
+    siteStatus ? el("p", { class: "panel-note", text: siteStatus }) : null,
+    siteSummary(),
+    el("div", { class: "interp-label", text: "Site map: everything found, with errors (suggestions)" }),
+    el("a", { class: "btn ghost", href: api.siteDownloadUrl(siteName), text: `${siteName} — site GeoJSON` }),
+    el("a", { class: "btn ghost", href: api.exportUrl("kml", `site:${siteName}`), text: `${siteName} — site KML` }),
+    el("a", { class: "btn ghost", href: api.exportUrl("dxf", `site:${siteName}`), text: `${siteName} — site DXF` }),
+    el("div", { class: "interp-label", text: "Dig map: supervisor-confirmed items only" }),
+    el("a", { class: "btn ghost", href: api.digDownloadUrl(siteName, "pdf"), text: `${siteName} — dig sheet (PDF)` }),
+    el("a", { class: "btn ghost", href: api.digDownloadUrl(siteName, "csv"), text: `${siteName} — dig items (CSV)` }),
+    el("a", { class: "btn ghost", href: api.digDownloadUrl(siteName, "geojson"), text: `${siteName} — dig GeoJSON` }),
+  ]);
+}
+
 function paint() {
   const job = getState().job;
   if (!job) {
     replace(container,
       el("p", { class: "panel-note", text: "Open a line to place it on the map. The vendor's utilities are already placed from their drawings." }),
       el("div", { class: "btn-row" }, [el("button", { class: "btn primary", text: "Show the map", onclick: () => callbacks.onShowMap?.() })]),
+      siteSection(),
       exports(null));
     return;
   }
@@ -160,6 +242,7 @@ function paint() {
     ]),
     status ? el("p", { class: isError ? "caveat" : "panel-note ok-note", text: status }) : null,
     el("div", { class: "btn-row" }, [el("button", { class: "btn ghost", text: "Show the map", onclick: () => { callbacks.onShowMap?.(); mapView.focusLine(job); } })]),
+    siteSection(),
     exports(job));
 }
 

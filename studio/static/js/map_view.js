@@ -24,7 +24,7 @@ const REVIEW_COLOURS = { proposed: "#f5a623", confirmed: "#34c77b" };
 let map = null;
 let renderer = null;
 let osm = null;
-const layers = { vendor: null, risk: null, lines: null };
+const layers = { vendor: null, risk: null, lines: null, site: null };
 const visible = { vendor: true, riskOnly: false, lines: true, osm: false };
 let vendorData = null;
 let clickHandler = null;
@@ -236,4 +236,66 @@ export async function focusLine(job) {
 export function onMapClick(handler) {
   clickHandler = handler;
   document.getElementById("map")?.classList.toggle("picking", Boolean(handler));
+}
+
+
+/* ---------- field mode ---------- */
+
+const SITE_COLOURS = { line: "#8a94a6", target: "#f5a623", run: "#4f9cff", confirmed: "#34c77b", interpreted: "#c084fc" };
+
+function siteLayer(field, dig) {
+  const group = L.featureGroup();
+  for (const feature of field.features) {
+    const p = feature.properties;
+    if (p.kind === "survey_line") {
+      L.polyline(feature.geometry.coordinates.map(([lon, lat]) => [lat, lon]), { renderer, color: SITE_COLOURS.line, weight: 2 })
+        .bindPopup(() => popup([["Line", p.job], ["Length", fmt(p.length_m, 2, " m")], ["GPS jitter", fmt(p.gps_jitter_m, 2, " m")]]))
+        .addTo(group);
+    } else if (p.kind === "utility_run") {
+      L.polyline(feature.geometry.coordinates.map(([lon, lat]) => [lat, lon]),
+        { renderer, color: SITE_COLOURS.run, weight: 3, dashArray: "8 6" })
+        .bindPopup(() => popup([["Possible run", p.id], ["Crosses", `${p.lines} lines`], ["Depth", `${fmt(p.depth_m, 2, " m")}`],
+          ["Evidence", p.evidence], ["Status", "suggested — not a confirmed pipe"]]))
+        .addTo(group);
+    } else if (p.kind === "target") {
+      const [lon, lat] = feature.geometry.coordinates;
+      L.circleMarker([lat, lon], { renderer, radius: p.corroboration >= 2 ? 4 : 2.5, color: SITE_COLOURS.target,
+        fillColor: SITE_COLOURS.target, fillOpacity: p.corroboration >= 2 ? 0.9 : 0.4, weight: 1 })
+        .bindPopup(() => popup([["Suggested target", p.id], ["Depth", `${fmt(p.depth_m, 2)} ± ${fmt(p.depth_error_m, 2, " m")}`],
+          ["Position", `± ${fmt(p.horizontal_error_m, 2, " m")}`], ["Channels", p.channels.join(", ")],
+          ["Status", "detector suggestion — review before digging"]]))
+        .addTo(group);
+    }
+  }
+  for (const feature of dig?.features ?? []) {
+    const p = feature.properties;
+    const [lon, lat] = feature.geometry.coordinates;
+    const colour = p.status === "confirmed" ? SITE_COLOURS.confirmed : SITE_COLOURS.interpreted; // unknown fails closed
+    L.circle([lat, lon], { radius: p.horizontal_error_m, color: colour, weight: 1, dashArray: "4 4", fill: false }).addTo(group);
+    L.circleMarker([lat, lon], { renderer, radius: 7, color: "#0b0d11", fillColor: colour, fillOpacity: 1, weight: 2 })
+      .bindPopup(() => popup([["Dig item", p.id], ["What", [p.identity, p.material].filter(Boolean).join(" · ") || "—"],
+        ["Depth", `${fmt(p.depth_range_m[0], 2)}–${fmt(p.depth_range_m[1], 2, " m")}`],
+        ["Tape out", `${fmt(p.chainage_m, 2, " m")} along ${p.line} from its start`],
+        ["Map position", `± ${fmt(p.horizontal_error_m, 2, " m")}`], ["Decided by", `${p.decided_by} · ${p.decided_at}`],
+        ["Field", p.field_outcome ? `${p.field_outcome} (${p.field_report})` : "not visited yet"]]))
+      .addTo(group);
+  }
+  return group;
+}
+
+/** Draw one site's field map (and dig items, if given) and zoom to it. Returns the summary note. */
+export async function showSite(field, dig) {
+  ensureMap();
+  map.invalidateSize();
+  if (layers.site) map.removeLayer(layers.site);
+  layers.site = siteLayer(field, dig).addTo(map);
+  // The map's first load fits everything (the whole city's vendor drawings) once; claim the view
+  // so that load, finishing after this, does not zoom back out.
+  fitted = true;
+  if (layers.site.getLayers().length) map.fitBounds(layers.site.getBounds(), { padding: [40, 40], maxZoom: 21 });
+}
+
+export function clearSite() {
+  if (layers.site && map) map.removeLayer(layers.site);
+  layers.site = null;
 }

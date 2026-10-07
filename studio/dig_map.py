@@ -28,7 +28,7 @@ from __future__ import annotations
 import csv
 import io
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -43,9 +43,9 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from core import boxes as box_store
 from detect.channel_fusion import time_zero_ns
 from studio import candidates as candidate_store
+from studio import field_reports, session, site_map
 from studio import picks as pick_store
 from studio import reviews as review_store
-from studio import session, site_map
 from studio.processing import SPEED_OF_LIGHT_M_PER_NS
 
 _DEFAULT_DIELECTRIC = 9.0
@@ -70,6 +70,8 @@ class DigItem:
     decided_at: str
     depth_basis: str
     note: str = ""
+    field_outcome: str = ""  # the crew's latest report: found / not_found / dug, or empty
+    field_report: str = ""  # who reported it, when, and any depth measured in the hole
 
 
 @dataclass(frozen=True)
@@ -210,7 +212,21 @@ def dig_items(dataset_dir: Path, site: str, *, include_interpreted: bool = False
                                         note=p.note))
             except _Unplaceable as why:
                 attention.append(Attention(job, p.id, str(why)))
-    return items, attention
+    outcomes: dict[str, dict[str, field_reports.FieldReport]] = {}
+    for job in {i.job for i in items}:
+        try:
+            outcomes[job] = field_reports.latest_outcomes(job)
+        except ValueError:
+            outcomes[job] = {}
+            attention.append(Attention(job, "", "the field-reports file for this line is unreadable; its outcomes are not shown"))
+    return [_with_outcome(i, outcomes[i.job].get(i.id)) for i in items], attention
+
+
+def _with_outcome(item: DigItem, report: field_reports.FieldReport | None) -> DigItem:
+    if report is None:
+        return item
+    found = f", {report.depth_found_m:.2f} m deep in the hole" if report.depth_found_m is not None else ""
+    return replace(item, field_outcome=report.outcome, field_report=f"{report.reporter}, {report.reported_at}{found}")
 
 
 def to_geojson(site: str, items: list[DigItem], attention: list[Attention]) -> dict[str, Any]:
@@ -223,7 +239,8 @@ def to_geojson(site: str, items: list[DigItem], attention: list[Attention]) -> d
                                 "depth_range_m": [round(max(i.depth_m - i.depth_error_m, 0), 2),
                                                   round(i.depth_m + i.depth_error_m, 2)],
                                 "depth_basis": i.depth_basis, "identity": i.identity, "material": i.material,
-                                "decided_by": i.decided_by, "decided_at": i.decided_at, "note": i.note}}
+                                "decided_by": i.decided_by, "decided_at": i.decided_at, "note": i.note,
+                                "field_outcome": i.field_outcome, "field_report": i.field_report}}
                 for i in items]
     return {"type": "FeatureCollection", "features": features,
             "metadata": {"site": site, "items": len(items),
@@ -236,7 +253,7 @@ def to_geojson(site: str, items: list[DigItem], attention: list[Attention]) -> d
 
 _COLUMNS = ("id", "status", "line", "chainage_m", "lat", "lon", "horizontal_error_m", "depth_m", "depth_min_m",
             "depth_max_m", "identity", "material", "decided_by", "decided_at", "depth_basis", "note",
-            "line_start_lat", "line_start_lon", "attention_reason")
+            "line_start_lat", "line_start_lon", "field_outcome", "field_report", "attention_reason")
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -254,7 +271,7 @@ def to_csv(items: list[DigItem], attention: list[Attention]) -> str:
                          f"{i.horizontal_error_m:.2f}", f"{i.depth_m:.2f}", f"{max(i.depth_m - i.depth_error_m, 0):.2f}",
                          f"{i.depth_m + i.depth_error_m:.2f}", _text(i.identity), _text(i.material),
                          _text(i.decided_by), i.decided_at, _text(i.depth_basis), _text(i.note),
-                         f"{i.line_start[0]:.8f}", f"{i.line_start[1]:.8f}", ""])
+                         f"{i.line_start[0]:.8f}", f"{i.line_start[1]:.8f}", i.field_outcome, _text(i.field_report), ""])
     for a in attention:
         writer.writerow([_text(f"{a.job}#{a.ref}" if a.ref else a.job), "needs_attention", _text(a.job)]
                         + [""] * (len(_COLUMNS) - 4) + [_text(a.reason)])
