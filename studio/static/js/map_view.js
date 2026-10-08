@@ -15,11 +15,11 @@ import { el, replace } from "./dom.js";
 const L = window.L;
 
 export const UTILITY_COLOURS = {
-  ELECTRIC: "#ff5d5d", WATER: "#38bdf8", SEWER: "#e879f9", UC: "#4ade80", OFC: "#fb923c",
-  "STORM WATER": "#facc15", DRAIN: "#2dd4bf", METALLIC: "#cbd5e1", "PIPE LINE": "#a78bfa",
+  ELECTRIC: "#ef4444", WATER: "#38bdf8", SEWER: "#e879f9", UC: "#4ade80", OFC: "#fb923c",
+  "STORM WATER": "#facc15", DRAIN: "#2dd4bf", METALLIC: "#d4d4d8", "PIPE LINE": "#a78bfa",
   GAS: "#fde047", TELECOM: "#f472b6",
 };
-const REVIEW_COLOURS = { proposed: "#f5a623", confirmed: "#34c77b" };
+const REVIEW_COLOURS = { proposed: "#f59e0b", confirmed: "#22c55e" };
 
 let map = null;
 let renderer = null;
@@ -51,7 +51,7 @@ function vendorLayer(features, riskOnly) {
     const [lon, lat] = feature.geometry.coordinates;
     const marker = L.circleMarker([lat, lon], {
       renderer, radius: risk ? 7 : 4.5, weight: risk ? 2.5 : 1,
-      color: risk ? "#ffffff" : "#0b0d11", fillColor: UTILITY_COLOURS[p.utility] ?? "#94a3b8", fillOpacity: 0.95,
+      color: risk ? "#ffffff" : "#09090b", fillColor: UTILITY_COLOURS[p.utility] ?? "#a1a1aa", fillOpacity: 0.95,
     });
     marker.bindPopup(() => popup([
       ["Utility", p.utility],
@@ -75,7 +75,7 @@ function lineLayer(collections) {
       const p = feature.properties;
       if (feature.geometry.type === "LineString") {
         const latlngs = feature.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
-        L.polyline(latlngs, { renderer, color: "#4f9cff", weight: 4, opacity: 0.9 })
+        L.polyline(latlngs, { renderer, color: "#3b82f6", weight: 4, opacity: 0.9 })
           .bindPopup(() => popup([
             ["Line", p.id],
             ["Placed by", p.position_method === "onboard_gps_track" ? "onboard GPS track" : "surveyed reference points"],
@@ -89,17 +89,17 @@ function lineLayer(collections) {
       const [lon, lat] = feature.geometry.coordinates;
       if (p.kind === "line_location") {
         // Frozen GPS: where the survey happened, not where the line ran — a circle, never a line.
-        L.circle([lat, lon], { radius: p.uncertainty_radius_m, color: "#4f9cff", weight: 1.5, dashArray: "6 5",
-          fillColor: "#4f9cff", fillOpacity: 0.08 }).bindPopup(() => popup([
+        L.circle([lat, lon], { radius: p.uncertainty_radius_m, color: "#3b82f6", weight: 1.5, dashArray: "6 5",
+          fillColor: "#3b82f6", fillOpacity: 0.08 }).bindPopup(() => popup([
           ["Line", p.id], ["Placed by", "onboard GPS — location only"],
           ["Within", `${fmt(p.uncertainty_radius_m, 1, " m")} of here`], ["Direction", "unknown (GPS froze)"],
           ["GPS fixes", String(p.gps_fixes)],
         ])).addTo(group);
-        L.circleMarker([lat, lon], { renderer, radius: 4, color: "#4f9cff", fillColor: "#4f9cff", fillOpacity: 1, weight: 1 }).addTo(group);
+        L.circleMarker([lat, lon], { renderer, radius: 4, color: "#3b82f6", fillColor: "#3b82f6", fillOpacity: 1, weight: 1 }).addTo(group);
         continue;
       }
-      const colour = p.kind === "claim" ? REVIEW_COLOURS[p.review_status] ?? "#f5a623"
-        : p.origin === "interpreter pick" ? "#f5b041" : "#94a3b8";
+      const colour = p.kind === "claim" ? REVIEW_COLOURS[p.review_status] ?? "#f59e0b"
+        : p.origin === "interpreter pick" ? "#f59e0b" : "#a1a1aa";
       L.circleMarker([lat, lon], {
         renderer, radius: p.kind === "claim" ? 6 : 4, weight: p.kind === "claim" ? 2 : 1,
         color: colour, fillColor: colour, fillOpacity: p.kind === "claim" && p.review_status !== "confirmed" ? 0.25 : 0.85,
@@ -125,14 +125,14 @@ function renderLegend() {
   replace(legend,
     el("div", { class: "legend-title", text: "Vendor utilities" }),
     ...entries.map(([name, n]) => el("div", { class: "legend-row" }, [
-      el("span", { class: "dot", style: `background:${UTILITY_COLOURS[name] ?? "#94a3b8"}` }),
+      el("span", { class: "dot", style: `background:${UTILITY_COLOURS[name] ?? "#a1a1aa"}` }),
       el("span", { text: name }), el("span", { class: "mono", text: String(n) }),
     ])),
     el("div", { class: "legend-row" }, [el("span", { class: "dot ring" }), el("span", { text: "could reach bore depth" })]),
     el("div", { class: "legend-title", text: "Radar lines" }),
-    el("div", { class: "legend-row" }, [el("span", { class: "dot", style: "background:#4f9cff" }), el("span", { text: "line track" })]),
+    el("div", { class: "legend-row" }, [el("span", { class: "dot", style: "background:#3b82f6" }), el("span", { text: "line track" })]),
     el("div", { class: "legend-row" }, [el("span", { class: "dot dashed blue" }), el("span", { text: "line location only (GPS froze)" })]),
-    el("div", { class: "legend-row" }, [el("span", { class: "dot", style: "background:#34c77b" }), el("span", { text: "confirmed claim" })]),
+    el("div", { class: "legend-row" }, [el("span", { class: "dot", style: "background:#22c55e" }), el("span", { text: "confirmed claim" })]),
     el("div", { class: "legend-row" }, [el("span", { class: "dot dashed" }), el("span", { text: "claim awaiting review" })]),
   );
 }
@@ -241,7 +241,7 @@ export function onMapClick(handler) {
 
 /* ---------- field mode ---------- */
 
-const SITE_COLOURS = { line: "#8a94a6", target: "#f5a623", run: "#4f9cff", confirmed: "#34c77b", interpreted: "#c084fc" };
+const SITE_COLOURS = { line: "#a1a1aa", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa" };
 
 function siteLayer(field, dig) {
   const group = L.featureGroup();
@@ -272,7 +272,7 @@ function siteLayer(field, dig) {
     const [lon, lat] = feature.geometry.coordinates;
     const colour = p.status === "confirmed" ? SITE_COLOURS.confirmed : SITE_COLOURS.interpreted; // unknown fails closed
     L.circle([lat, lon], { radius: p.horizontal_error_m, color: colour, weight: 1, dashArray: "4 4", fill: false }).addTo(group);
-    L.circleMarker([lat, lon], { renderer, radius: 7, color: "#0b0d11", fillColor: colour, fillOpacity: 1, weight: 2 })
+    L.circleMarker([lat, lon], { renderer, radius: 7, color: "#09090b", fillColor: colour, fillOpacity: 1, weight: 2 })
       .bindPopup(() => popup([["Dig item", p.id], ["What", [p.identity, p.material].filter(Boolean).join(" · ") || "—"],
         ["Depth", `${fmt(p.depth_range_m[0], 2)}–${fmt(p.depth_range_m[1], 2, " m")}`],
         ["Tape out", `${fmt(p.chainage_m, 2, " m")} along ${p.line} from its start`],

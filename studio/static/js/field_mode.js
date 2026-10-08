@@ -14,7 +14,7 @@ import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 
 const L = window.L;
-const COLOURS = { line: "#7d8797", target: "#f5a623", run: "#4f9cff", confirmed: "#34c77b", interpreted: "#c084fc", select: "#ffffff" };
+const COLOURS = { line: "#a1a1aa", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
 const QUICK_NAMES = ["Water pipe", "Sewer", "Storm drain", "Electric cable", "Telecom duct", "Gas pipe", "Unknown utility"];
 const NAME_KEY = "gpr-supervisor";
 
@@ -138,7 +138,7 @@ function drawMap(fit) {
     } else if (p.kind === "target") {
       const [lon, lat] = f.geometry.coordinates;
       const strong = p.corroboration >= 2;
-      peekAt(L.circleMarker([lat, lon], { radius: strong ? 5 : 3.5, color: "#0b0d11", weight: 1, fillColor: COLOURS.target,
+      peekAt(L.circleMarker([lat, lon], { radius: strong ? 5 : 3.5, color: "#09090b", weight: 1, fillColor: COLOURS.target,
         fillOpacity: strong ? 0.95 : 0.45 }), p.job, p.channels[0], p.chainage_m,
       `Suggestion ${shortId(p.id)} · ${fmt(p.depth_m)} m deep`).on("click", onPick(f)).addTo(groups.targets);
     }
@@ -149,7 +149,7 @@ function drawMap(fit) {
     const colour = p.status === "confirmed" ? COLOURS.confirmed : COLOURS.interpreted;
     L.circle([lat, lon], { radius: p.horizontal_error_m, color: colour, weight: 1, dashArray: "4 4", fill: false, interactive: false })
       .addTo(groups.errors);
-    peekAt(L.circleMarker([lat, lon], { radius: 8, color: "#0b0d11", weight: 2, fillColor: colour, fillOpacity: 1 }),
+    peekAt(L.circleMarker([lat, lon], { radius: 8, color: "#09090b", weight: 2, fillColor: colour, fillOpacity: 1 }),
       p.line, p.channel, p.chainage_m, `${p.identity || "Dig item"} · ${fmt(p.depth_range_m[0])}–${fmt(p.depth_range_m[1])} m`)
       .on("click", onPick(f)).addTo(groups.dig);
   }

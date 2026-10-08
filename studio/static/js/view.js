@@ -15,16 +15,16 @@ export const GUTTER_LEFT = 62;
 export const GUTTER_TOP = 24;
 
 const COLOURS = {
-  gutter: "#0b0e11",
-  gutterLine: "#2a313b",
-  tick: "#5c6673",
-  label: "#8a94a3",
-  crosshair: "#4ea3d8",
-  pick: "#f0a830",
-  fit: "#48d18a",
-  manual: "#4ea3d8",
-  measure: "#e0603c",
-  marquee: "#4ea3d8",
+  gutter: "#09090b",
+  gutterLine: "#27272a",
+  tick: "#52525b",
+  label: "#a1a1aa",
+  crosshair: "#3b82f6",
+  pick: "#f59e0b",
+  fit: "#22c55e",
+  manual: "#3b82f6",
+  measure: "#f97316",
+  marquee: "#3b82f6",
 };
 
 /* Candidate boxes are tinted by the shape the diagnoser measured, matching the
@@ -36,7 +36,7 @@ const CANDIDATE_COLOURS = {
   elongated_linear_target: "#00aaff",
   disturbed_zone: "#ff5533",
 };
-const CANDIDATE_UNDIAGNOSED = "#7d8794";
+const CANDIDATE_UNDIAGNOSED = "#71717a";
 
 const canvas = document.getElementById("radargram");
 const ctx = canvas.getContext("2d");
@@ -350,9 +350,9 @@ function drawHyperbola(state, channel) {
  * rejected. The circle is drawn on the target's own measured box, never somewhere a model
  * chose, so it always sits on real data. */
 const REVIEW_STYLES = {
-  proposed: { colour: "#f5a623", dash: [6, 4], mark: "?" },
-  confirmed: { colour: "#34c77b", dash: [], mark: "✓" },
-  rejected: { colour: "#ff5d5d", dash: [2, 3], mark: "✗" },
+  proposed: { colour: "#f59e0b", dash: [6, 4], mark: "?" },
+  confirmed: { colour: "#22c55e", dash: [], mark: "✓" },
+  rejected: { colour: "#ef4444", dash: [2, 3], mark: "✗" },
 };
 
 function drawReviews(state, channel) {

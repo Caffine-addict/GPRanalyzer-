@@ -23,7 +23,7 @@ const dom = {
   title: document.getElementById("title"), gps: document.getElementById("gps"), banners: document.getElementById("banners"),
   target: document.getElementById("target"), items: document.getElementById("items"), attention: document.getElementById("attention"),
 };
-const COLOURS = { confirmed: "#34c77b", interpreted: "#c084fc", line: "#8a94a6", me: "#4f9cff" };
+const COLOURS = { confirmed: "#22c55e", interpreted: "#a78bfa", line: "#a1a1aa", me: "#3b82f6" };
 const colourOf = (status) => (status === "confirmed" ? COLOURS.confirmed : COLOURS.interpreted); // unknown fails closed
 const label = (item) => (item.status === "confirmed" ? "confirmed" : "UNCONFIRMED");
 
@@ -174,7 +174,7 @@ function drawMap(field, dig) {
     const [lon, lat] = f.geometry.coordinates;
     const colour = colourOf(f.properties.status);
     L.circle([lat, lon], { radius: f.properties.horizontal_error_m, color: colour, weight: 1, fill: false }).addTo(group);
-    L.circleMarker([lat, lon], { radius: 8, color: "#0b0d11", weight: 2, fillColor: colour, fillOpacity: 1 })
+    L.circleMarker([lat, lon], { radius: 8, color: "#09090b", weight: 2, fillColor: colour, fillOpacity: 1 })
       .on("click", () => select(items.find((i) => i.id === f.properties.id) ?? null))
       .addTo(group);
   }

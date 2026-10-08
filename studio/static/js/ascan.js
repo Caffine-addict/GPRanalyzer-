@@ -30,7 +30,7 @@ export function draw(ascan, highlightSample) {
 
   if (!ascan?.samples?.length) {
     label.textContent = "—";
-    ctx.fillStyle = "#5c6673";
+    ctx.fillStyle = "#52525b";
     ctx.font = "11px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("move the cursor over the radargram", width / 2, height / 2);
@@ -45,14 +45,14 @@ export function draw(ascan, highlightSample) {
   const midY = height / 2;
   const stepX = width / (samples.length - 1);
 
-  ctx.strokeStyle = "#212832";
+  ctx.strokeStyle = "#27272a";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, midY + 0.5);
   ctx.lineTo(width, midY + 0.5);
   ctx.stroke();
 
-  ctx.strokeStyle = "#4ea3d8";
+  ctx.strokeStyle = "#3b82f6";
   ctx.lineWidth = 1.2;
   ctx.beginPath();
   samples.forEach((value, index) => {
@@ -64,7 +64,7 @@ export function draw(ascan, highlightSample) {
 
   if (highlightSample != null && highlightSample >= 0 && highlightSample < samples.length) {
     const x = highlightSample * stepX;
-    ctx.strokeStyle = "#f0a830";
+    ctx.strokeStyle = "#f59e0b";
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(x, 0);
