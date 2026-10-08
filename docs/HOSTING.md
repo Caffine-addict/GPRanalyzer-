@@ -25,6 +25,10 @@ mode. Everyone signs in with their own account, and every attempt is logged in P
 6. **Phones and laptops**: install Tailscale, sign in to the same tailnet (or share this machine
    with them from the admin console), open the address, sign in to the Studio.
 
+**On the host Mac itself, open http://127.0.0.1:8500.** The user-mode daemon serves the `.ts.net`
+address to other devices but cannot make this Mac's own browser resolve it. (The Tailscale GUI app
+would, but its sign-in failed on this machine on 2026-10-08; user mode was kept.)
+
 ## Day to day
 
 | Task | Command |
