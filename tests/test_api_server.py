@@ -1,8 +1,8 @@
 """Tests for api/server.py using FastAPI's TestClient (REST + WebSocket).
 
-The app factory (create_app) is pointed at an isolated test config (temp
-DuckDB path, fixture replay directory) rather than the real config.yaml, so
-these tests never touch the real output/gpr.duckdb. The real Detector and
+The app factory (create_app) is pointed at an isolated test config (fixture
+replay directory) and DATABASE_URL at a fresh test schema, so these tests never
+touch the real database. The real Detector and
 (absent GROQ_API_KEY) no-reasoning-engine come from the lifespan as normal;
 tests that need actual findings/reasoning to flow through swap in a fake
 detector/reasoning engine on app.state.survey_manager after startup —
@@ -27,8 +27,14 @@ from api.server import create_app
 from core.config import load_config
 from core.contracts import Detection
 from reason.engine import ReasoningEngine
+from tests.pg import fresh_url
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def _test_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", fresh_url())
 
 
 def _write_fixture_frames(directory: Path, n: int) -> None:
@@ -39,7 +45,6 @@ def _write_fixture_frames(directory: Path, n: int) -> None:
 
 def _write_test_config(tmp_path: Path, frames_dir: Path, *, step_mode: bool = True) -> Path:
     raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
-    raw["store"]["path"] = str(tmp_path / "test.duckdb")
     raw["source"]["replay"]["path"] = str(frames_dir)
     raw["source"]["replay"]["step_mode"] = step_mode
     config_path = tmp_path / "config.yaml"

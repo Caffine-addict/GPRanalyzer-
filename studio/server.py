@@ -25,6 +25,7 @@ import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import numpy as np
 from dotenv import load_dotenv
@@ -37,7 +38,7 @@ from evidence.quality import quality_level
 from reason.engine import GroqClient, ReasoningEngine
 from reason.prompt import build_evidence_block
 from reference import library as reference_library
-from studio import assistant_routes, geo_routes, imports, interpret, render, session, velocity
+from studio import assistant_routes, auth, geo_routes, imports, interpret, render, session, velocity
 from studio import candidates as candidate_store
 from studio import palette as palette_module
 from studio import picks as pick_store
@@ -53,6 +54,7 @@ app = FastAPI(title="GPR Studio")
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 app.include_router(assistant_routes.router)
 app.include_router(geo_routes.router)
+app.include_router(auth.router)
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -77,19 +79,23 @@ async def revalidate_the_app(request: Request, call_next):  # type: ignore[no-un
 async def refuse_cross_site_writes(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Only the Studio's own page may change data.
 
-    The server is loopback-only and has no login, but a browser will still deliver a form or
-    fetch POST from any site the operator has open — those skip CORS preflight entirely. So any
-    write that a browser marks as coming from elsewhere is refused. Requests with neither header
-    (curl, scripts, the test client) are not from a browser page and are let through.
+    A browser sends the session cookie with a form or fetch POST from any site the operator has
+    open (SameSite=Lax stops most, not same-site ones), and those skip CORS preflight. So any write
+    a browser marks as coming from elsewhere is refused, the sign-in form included. Requests with
+    neither header (curl, scripts, the test client) are not from a browser page and pass. Hosts are
+    compared, not schemes: behind an HTTPS proxy (Tailscale) the page is https, the server sees http.
     """
     if request.method not in _SAFE_METHODS:
         fetch_site = request.headers.get("sec-fetch-site")
         origin = request.headers.get("origin")
-        own_origin = f"{request.url.scheme}://{request.url.netloc}"
-        if fetch_site in ("cross-site", "same-site") or (origin and origin != own_origin):
+        if fetch_site in ("cross-site", "same-site") or (origin and urlsplit(origin).netloc != request.url.netloc):
             return JSONResponse({"detail": "refused: request did not come from GPR Studio's own page"},
                                 status_code=403)
     return await call_next(request)
+
+
+# Registered last, so it runs first: nothing below is reachable without a session.
+app.middleware("http")(auth.require_login)
 
 
 def _dataset_dir(request: Request) -> Path:

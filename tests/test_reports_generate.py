@@ -14,12 +14,13 @@ from pypdf import PdfReader
 
 from core.contracts import Evidence, Finding, ScanFrame
 from reports.generate import _format_value, generate_report
-from store.duckdb_store import DuckDBStore
+from store.postgres_store import PostgresStore
+from tests.pg import fresh_store
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> DuckDBStore:
-    s = DuckDBStore(tmp_path / "test.duckdb")
+def store(tmp_path: Path) -> PostgresStore:
+    s = fresh_store()
     yield s
     s.close()
 
@@ -77,7 +78,7 @@ def _value_after_line(text: str, label: str) -> str:
     return lines[lines.index(label) + 1]
 
 
-def test_generate_report_creates_a_real_pdf_file(store: DuckDBStore, tmp_path: Path) -> None:
+def test_generate_report_creates_a_real_pdf_file(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding("s1", "l1", frame_id, _finding())
 
@@ -89,7 +90,7 @@ def test_generate_report_creates_a_real_pdf_file(store: DuckDBStore, tmp_path: P
     assert len(reader.pages) >= 1
 
 
-def test_generate_report_creates_missing_parent_directories(store: DuckDBStore, tmp_path: Path) -> None:
+def test_generate_report_creates_missing_parent_directories(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding("s1", "l1", frame_id, _finding())
 
@@ -98,7 +99,7 @@ def test_generate_report_creates_missing_parent_directories(store: DuckDBStore, 
     assert out.exists()
 
 
-def test_report_includes_survey_id_and_summary_counts(store: DuckDBStore, tmp_path: Path) -> None:
+def test_report_includes_survey_id_and_summary_counts(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("survey-42", "l1", _frame())
     store.save_finding("survey-42", "l1", frame_id, _finding(risk_level="HIGH", evidence=_evidence(detection_class="cavities")))
     store.save_finding("survey-42", "l1", frame_id, _finding(risk_level="HIGH", evidence=_evidence(detection_class="cavities")))
@@ -113,7 +114,7 @@ def test_report_includes_survey_id_and_summary_counts(store: DuckDBStore, tmp_pa
     assert "disturbed_zone" in text
 
 
-def test_report_shows_no_findings_message_for_empty_survey(store: DuckDBStore, tmp_path: Path) -> None:
+def test_report_shows_no_findings_message_for_empty_survey(store: PostgresStore, tmp_path: Path) -> None:
     out = generate_report("nonexistent", store, tmp_path / "report.pdf")
     text = _extract_text(out)
 
@@ -122,7 +123,7 @@ def test_report_shows_no_findings_message_for_empty_survey(store: DuckDBStore, t
 
 
 def test_report_never_shows_a_fabricated_number_for_unavailable_confidence(
-    store: DuckDBStore, tmp_path: Path
+    store: PostgresStore, tmp_path: Path
 ) -> None:
     # The one invariant this whole project is built around: a value must
     # never appear where its confidence says it's "unavailable."
@@ -151,7 +152,7 @@ def test_report_never_shows_a_fabricated_number_for_unavailable_confidence(
     assert _format_value(None, "unavailable") == "unavailable"
 
 
-def test_report_confidence_caveats_reflect_actual_mixed_data(store: DuckDBStore, tmp_path: Path) -> None:
+def test_report_confidence_caveats_reflect_actual_mixed_data(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding("s1", "l1", frame_id, _finding(evidence=_evidence(depth_confidence="calibrated", depth_m=0.5)))
     store.save_finding("s1", "l1", frame_id, _finding(evidence=_evidence(depth_confidence="estimated", depth_m=0.3)))
@@ -163,7 +164,7 @@ def test_report_confidence_caveats_reflect_actual_mixed_data(store: DuckDBStore,
     assert "1 calibrated, 1 estimated, 1 unavailable" in text.replace("\n", " ")
 
 
-def test_findings_sorted_highest_risk_first(store: DuckDBStore, tmp_path: Path) -> None:
+def test_findings_sorted_highest_risk_first(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     # Saved in a deliberately non-sorted order (LOW, HIGH, MEDIUM) — the
     # report must reorder, not just reflect insertion order. Distinguished
@@ -187,7 +188,7 @@ def test_findings_sorted_highest_risk_first(store: DuckDBStore, tmp_path: Path) 
     assert high_pos < medium_pos < low_pos
 
 
-def test_report_shows_risk_rules_fired_when_present(store: DuckDBStore, tmp_path: Path) -> None:
+def test_report_shows_risk_rules_fired_when_present(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding(
         "s1", "l1", frame_id, _finding(risk_level="HIGH", risk_rules_fired=("cavities_with_utility",))
@@ -200,7 +201,7 @@ def test_report_shows_risk_rules_fired_when_present(store: DuckDBStore, tmp_path
 
 
 def test_report_shows_reasoning_unavailable_when_finding_has_no_reasoning(
-    store: DuckDBStore, tmp_path: Path
+    store: PostgresStore, tmp_path: Path
 ) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding("s1", "l1", frame_id, _finding())  # default has what=None
@@ -211,7 +212,7 @@ def test_report_shows_reasoning_unavailable_when_finding_has_no_reasoning(
     assert "reasoning unavailable" in text
 
 
-def test_report_shows_actual_reasoning_when_present(store: DuckDBStore, tmp_path: Path) -> None:
+def test_report_shows_actual_reasoning_when_present(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding(
         "s1",
@@ -253,7 +254,7 @@ class TestFormatValue:
         assert _format_value(1.2, "estimated") == "1.200 (estimated)"
 
 
-def test_confidence_caveats_pin_each_field_to_its_own_correct_breakdown(store: DuckDBStore, tmp_path: Path) -> None:
+def test_confidence_caveats_pin_each_field_to_its_own_correct_breakdown(store: PostgresStore, tmp_path: Path) -> None:
     # A generic "some breakdown appears somewhere in the text" assertion
     # can't catch a field mixup (e.g. Depth's line actually counting
     # position_confidence) — the exact bug class Session 6 hit with a real
@@ -289,7 +290,7 @@ def test_confidence_caveats_pin_each_field_to_its_own_correct_breakdown(store: D
     assert "0 calibrated, 0 estimated, 2 unavailable" in amplitude_line
 
 
-def test_summary_table_pins_each_risk_level_to_its_own_correct_count(store: DuckDBStore, tmp_path: Path) -> None:
+def test_summary_table_pins_each_risk_level_to_its_own_correct_count(store: PostgresStore, tmp_path: Path) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     for _ in range(3):
         store.save_finding("s1", "l1", frame_id, _finding(risk_level="HIGH"))
@@ -307,7 +308,7 @@ def test_summary_table_pins_each_risk_level_to_its_own_correct_count(store: Duck
 
 
 def test_report_shows_every_risk_rule_with_a_separator_when_multiple_fire(
-    store: DuckDBStore, tmp_path: Path
+    store: PostgresStore, tmp_path: Path
 ) -> None:
     frame_id = store.save_frame("s1", "l1", _frame())
     store.save_finding(
@@ -330,7 +331,7 @@ def test_report_shows_every_risk_rule_with_a_separator_when_multiple_fire(
 
 
 def test_report_free_text_with_markup_characters_does_not_crash_and_is_not_interpreted(
-    store: DuckDBStore, tmp_path: Path
+    store: PostgresStore, tmp_path: Path
 ) -> None:
     # reportlab's Paragraph() parses its argument as a small XML-like
     # markup language, not plain text. survey_id (an HTTP path parameter

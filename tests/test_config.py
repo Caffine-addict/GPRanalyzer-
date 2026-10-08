@@ -118,9 +118,6 @@ def test_loads_all_fields_from_real_config() -> None:
     assert cfg.latency.fast_path_target_ms == 500
     assert cfg.latency.reasoning_target_ms == 5000
 
-    assert cfg.store.backend == "duckdb"
-    assert cfg.store.path == "output/gpr.duckdb"
-
     assert cfg.api.cors_origins == ("http://localhost:5173", "http://127.0.0.1:5173")
 
 
@@ -276,8 +273,6 @@ _REQUIRED_KEY_PATHS: list[tuple[str, ...]] = [
     ("source", "direct_device", "poll_interval_s"),
     ("latency", "fast_path_target_ms"),
     ("latency", "reasoning_target_ms"),
-    ("store", "backend"),
-    ("store", "path"),
     ("api", "cors_origins"),
     ("detection",),
     ("enhancement",),
@@ -286,7 +281,6 @@ _REQUIRED_KEY_PATHS: list[tuple[str, ...]] = [
     ("reasoning",),
     ("source",),
     ("latency",),
-    ("store",),
     ("api",),
 ]
 

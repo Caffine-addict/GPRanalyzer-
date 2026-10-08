@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Sign in · GPR Studio</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #09090b; --panel: #111113; --line: #27272a; --line-strong: #3f3f46;
+    --text: #fafafa; --dim: #a1a1aa; --faint: #71717a; --accent: #3b82f6; --accent-hover: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    display: grid; place-items: center; min-height: 100vh; padding: 24px 16px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: min(360px, 100%); }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; font-weight: 600; font-size: 15px; }
+  .brand svg { width: 24px; height: 24px; color: var(--accent); }
+  h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+  .lead { margin: 0 0 22px; color: var(--dim); font-size: 13px; }
+  form { display: grid; gap: 14px; }
+  label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--dim); }
+  input {
+    height: 38px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line-strong);
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, .2); }
+  button {
+    height: 38px; margin-top: 6px; border: 0; border-radius: 6px; background: var(--accent); color: #fff;
+    font: inherit; font-weight: 500; cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .message {
+    margin: 0 0 16px; padding: 9px 12px; border-radius: 6px; font-size: 13px;
+    color: #fca5a5; background: rgba(239, 68, 68, .1); border: 1px solid rgba(239, 68, 68, .3);
+  }
+  .foot { margin-top: 22px; color: var(--faint); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/>
+    </svg>
+    GPR Studio
+  </div>
+  <h1>Sign in</h1>
+  <p class="lead">Use the account your administrator created for you.</p>
+  $message
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="$next">
+    <label>Username
+      <input name="username" value="$username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+    </label>
+    <label>Password
+      <input name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="foot">Every sign-in is recorded with its time and address.</p>
+</main>
+</body>
+</html>

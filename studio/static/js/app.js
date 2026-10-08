@@ -528,6 +528,7 @@ function installMenus() {
 
 async function boot() {
   modal.init();
+  api.whoAmI().then(({ username }) => { document.getElementById("accountName").textContent = username; }).catch(() => {});
   fieldMode.init({ openAt, view: () => ({ processing: getState().processing, display: getState().display }) });
   for (const button of document.querySelectorAll(".mode-switch .mode")) {
     button.addEventListener("click", () => setMode(button.dataset.mode));

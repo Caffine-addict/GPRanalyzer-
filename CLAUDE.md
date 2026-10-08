@@ -120,6 +120,19 @@ the endpoint returns 200 with the measured class, depth and risk intact plus a
 `reasoning_error` — the measurements are real work and are not thrown away because the
 model had nothing to say.
 
+## Storage and sign-in (2026-10-08)
+
+- **Postgres replaced DuckDB everywhere.** It runs from `compose.yaml` (127.0.0.1 only); the URL is
+  `DATABASE_URL` in `.env`, never config.yaml. `store/database.py` owns the pool and migrations (one
+  transaction under an advisory lock). Tests use `TEST_DATABASE_URL` and a fresh schema each
+  (`tests/pg.py`); they fail loudly if Postgres is down rather than skipping.
+- **The Studio needs a sign-in for everything** (`studio/auth.py`), and fails closed (503) without a
+  login database. Argon2id password hashes, SHA-256 of session tokens, every attempt in
+  `login_events`, lock-out after 5 failures per name / 20 per address in 15 min. Accounts:
+  `python -m studio.users`. Hosting is one PC + `tailscale serve` (docs/HOSTING.md).
+- Tests run signed in as a stand-in user (tests/conftest.py); `@pytest.mark.real_auth` tests use the
+  real thing.
+
 ## 9-class detection taxonomy
 
 `cavities`, `elongated_linear_target`, `intersecting_linear_and_point_reflector`,
@@ -131,7 +144,7 @@ model had nothing to say.
 
 Python 3.12, managed with `uv`. Dataclasses for contracts (not pydantic —
 `core/contracts.py` is intentionally dependency-light). `ultralytics`
-(YOLOv8) for detection, OpenCV for enhancement, DuckDB for storage, FastAPI +
+(YOLOv8) for detection, OpenCV for enhancement, Postgres (psycopg 3, pooled) for storage, FastAPI +
 WebSocket for the API, `groq` for reasoning, `reportlab` for PDF reports.
 Dashboard is a separate React + Vite project under `dashboard/` (three role
 views: operator, manager, pm) — not part of the Python package.
@@ -148,7 +161,7 @@ render/      bscan.py — traces -> normalised image (uncalibrated, logs as such
 evidence/    extract.py — Detection + ScanFrame + SourceCapabilities -> Evidence
 risk/        score.py — weighted score, thresholds, escalation rules
 reason/      schema.py, engine.py (Groq), prompts/ — v1_finding.txt (pipeline), v1_pick.txt (Studio)
-store/       Store interface + duckdb_store.py — no DuckDB calls outside this module
+store/       Store interface + postgres_store.py + auth_store.py — no SQL outside this package
 pipeline/    orchestrator.py — fast path emits immediately, reasoning is async
 api/         server.py — FastAPI + WebSocket
 reports/     generate.py — end-of-survey PDF with capability caveats

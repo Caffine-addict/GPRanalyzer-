@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import tempfile
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -28,7 +28,8 @@ from pipeline.orchestrator import Orchestrator, _same_target
 from preprocess.enhance import enhance
 from render.bscan import traces_to_image
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from store.database import database_url
+from store.postgres_store import PostgresStore
 
 DATASET = Path("Dataset/DSU_GPR_Files")
 
@@ -55,12 +56,11 @@ async def live_boxes(path: Path, config, chunk: int, window: int) -> list[TraceB
         found.append(finding.location)
 
     replay = replace(config.source.replay, path=str(path), step_mode=True, chunk_traces=chunk, window_traces=window)
-    with tempfile.TemporaryDirectory() as tmp:
-        store = DuckDBStore(Path(tmp) / "cmp.duckdb")
-        try:
-            await Orchestrator(ReplaySource(replay), ClassicalDetector(), store, config, emit, "cmp").run()
-        finally:
-            store.close()
+    store = PostgresStore(database_url())
+    try:
+        await Orchestrator(ReplaySource(replay), ClassicalDetector(), store, config, emit, f"cmp-{time.time_ns()}").run()
+    finally:
+        store.close()
     return found
 
 

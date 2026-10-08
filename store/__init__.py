@@ -1,1 +1,1 @@
-"""The Store interface and its DuckDB implementation — all persistence, no DuckDB calls outside this package."""
+"""All persistence: the Store interface, its Postgres implementation and the login store. No SQL outside this package."""

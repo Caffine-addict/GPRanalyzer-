@@ -45,7 +45,8 @@ from reports.generate import generate_report
 from sources.factory import create_source
 from sources.intake import IntakeError
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from store.database import database_url
+from store.postgres_store import PostgresStore
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         load_dotenv()
         config = load_config(config_path)
-        store = DuckDBStore(config.store.path)
+        store = PostgresStore(database_url())
         source = create_source(config.source)
         detector = _build_detector(config)
 
@@ -108,7 +109,7 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
 
         # Any survey still "running" is on a background asyncio task that
         # holds and uses `store` (writes on every frame). Closing the store
-        # out from under it would surface as spurious DuckDB errors on
+        # out from under it would surface as spurious database errors on
         # every remaining frame instead of a clean stop — drain them first.
         for record in survey_manager.list_surveys():
             if record.status == "running":
@@ -141,13 +142,10 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
 
     # All four GET handlers are deliberately `async def`, not plain `def`:
     # Starlette runs plain `def` route handlers in a worker thread pool,
-    # but DuckDBStore wraps one shared connection with no locking, and
     # SurveyManager/Orchestrator do all their store writes synchronously on
-    # the main event-loop thread. A sync handler reading from a threadpool
-    # thread while the event-loop thread writes concurrently can silently
-    # interleave cursor state and return another query's rows. Staying
-    # `async def` keeps every store call on the one event-loop thread,
-    # same principle already applied to start_survey/stop_survey below.
+    # the main event-loop thread. The Postgres store is thread-safe (a pooled
+    # connection per call), so this is no longer about correctness; it keeps
+    # store calls ordered with those writes, as start_survey/stop_survey do.
     @app.get("/surveys")
     async def list_surveys() -> list[dict[str, Any]]:
         manager: SurveyManager = app.state.survey_manager
@@ -155,17 +153,17 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
 
     @app.get("/surveys/{survey_id}/findings")
     async def get_survey_findings(survey_id: str) -> list[dict[str, Any]]:
-        store: DuckDBStore = app.state.store
+        store: PostgresStore = app.state.store
         return [finding_to_dict(f) for f in store.get_findings_by_survey(survey_id)]
 
     @app.get("/surveys/{survey_id}/summary")
     async def get_survey_summary(survey_id: str) -> dict[str, Any]:
-        store: DuckDBStore = app.state.store
+        store: PostgresStore = app.state.store
         return store.get_survey_summary(survey_id)
 
     @app.get("/lines/{line_id}/findings")
     async def get_line_findings(line_id: str) -> list[dict[str, Any]]:
-        store: DuckDBStore = app.state.store
+        store: PostgresStore = app.state.store
         return [finding_to_dict(f) for f in store.get_findings_for_line_id(line_id)]
 
     @app.get("/surveys/{survey_id}/report")
@@ -177,7 +175,7 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
         if not _SAFE_SURVEY_ID.fullmatch(survey_id):
             raise HTTPException(status_code=400, detail=f"invalid survey_id: {survey_id!r}")
 
-        store: DuckDBStore = app.state.store
+        store: PostgresStore = app.state.store
         manager: SurveyManager = app.state.survey_manager
         # Checked two ways: survey_manager's in-memory record covers a survey still running
         # in *this* process (which may have zero frames persisted yet), and store.survey_exists

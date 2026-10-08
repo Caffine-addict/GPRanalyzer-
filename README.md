@@ -129,7 +129,7 @@ sources/ -> parsers/ -> preprocess/ -> detect/ -> evidence/ -> risk/
                                                                   |
                                                   emit "finding.created"
                                                                   v
-                                                            store/ (DuckDB)
+                                                            store/ (Postgres)
                                                                   ^
                                                                   |
                                                   emit "finding.reasoned"
@@ -196,7 +196,7 @@ render/      bscan.py — traces -> normalised image (uncalibrated, logs as such
 evidence/    extract.py — Detection + ScanFrame + SourceCapabilities -> Evidence
 risk/        score.py — weighted score, thresholds, escalation rules
 reason/      schema.py, engine.py (Groq), prompts/ — v1_finding.txt (pipeline), v1_pick.txt (Studio)
-store/       Store interface + duckdb_store.py — no DuckDB calls outside this module
+store/       Store interface, postgres_store.py, auth_store.py (logins) — no SQL outside this package
 pipeline/    orchestrator.py — fast path emits immediately, reasoning is async
 api/         server.py (FastAPI + WebSocket), survey_manager.py, connection_manager.py, schemas.py
 reports/     generate.py — end-of-survey PDF with confidence-derived caveats
@@ -382,9 +382,10 @@ Training never replaces `weights/best.pt` unless you pass `--install`.
 
 ```python
 from reports.generate import generate_report
-from store.duckdb_store import DuckDBStore
+from store.database import database_url
+from store.postgres_store import PostgresStore
 
-store = DuckDBStore("output/gpr.duckdb")
+store = PostgresStore(database_url())  # DATABASE_URL from .env; docker compose up -d
 generate_report("survey-id", store, "output/survey-id.pdf")
 ```
 
@@ -439,7 +440,7 @@ Sessions 0–9 of the original build sequence are complete, reviewed, and
 gated — full detail (including every bug found and fixed along the way) in
 [`CLAUDE.md`](CLAUDE.md). In short: core contracts and config, the source
 abstraction, preprocessing, YOLOv8 detection, evidence extraction, risk
-scoring, LLM reasoning, DuckDB storage, the async orchestrator, the
+scoring, LLM reasoning, Postgres storage, the async orchestrator, the
 FastAPI/WebSocket API, the dashboard, and PDF reporting are all built and
 tested.
 

@@ -368,14 +368,14 @@ def test_location_serialises_or_stays_null() -> None:
 
 def test_a_findings_location_survives_a_round_trip_through_the_store(tmp_path: Path) -> None:
     from core.contracts import Evidence, Finding
-    from store.duckdb_store import DuckDBStore
+    from tests.pg import fresh_store
 
     ev = Evidence(
         detection_class="clear_point_reflector", detection_confidence=0.9, depth_m=None, depth_confidence="unavailable",
         position_m=None, position_confidence="unavailable", amplitude=None, amplitude_confidence="unavailable",
         hyperbola_width_px=10.0,
     )
-    store = DuckDBStore(tmp_path / "s.duckdb")
+    store = fresh_store()
     try:
         frame_id = store.save_frame("s", "l", _frame(np.zeros((4, 4), np.float32)))
         with_box = Finding(evidence=ev, risk_level="LOW", risk_score=0.1, location=TraceBox(3, 9, 20, 40))

@@ -135,9 +135,7 @@ latency:
   fast_path_target_ms: 500
   reasoning_target_ms: 5000
 
-store:
-  backend: duckdb
-  path: "output/gpr.duckdb"
+# store: Postgres, at DATABASE_URL in .env (a secret, so not here). See compose.yaml.
 
 api:
   # Origins allowed to make cross-origin requests to api/server.py — the

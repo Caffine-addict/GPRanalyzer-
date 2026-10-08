@@ -22,7 +22,7 @@ a = Analysis(  # noqa: F821
         "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on",
     ],
     excludes=["torch", "torchvision", "ultralytics", "tensorflow", "matplotlib", "IPython",
-              "scipy", "sklearn", "pandas", "h5py", "duckdb", "pytest"],
+              "scipy", "sklearn", "pandas", "h5py", "pytest"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)  # noqa: F821

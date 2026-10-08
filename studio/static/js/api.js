@@ -8,6 +8,11 @@
 
 async function request(url, options) {
   const response = await fetch(url, options);
+  if (response.status === 401) {
+    // the session ended (expired, signed out elsewhere, password changed): sign in, then come back
+    window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    throw new Error("signed out");
+  }
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -34,6 +39,7 @@ export function viewParams(processing, display, size) {
 }
 
 export const listJobs = () => request("/api/jobs");
+export const whoAmI = () => request("/api/me");
 export const getJob = (job) => request(`/api/jobs/${encodeURIComponent(job)}`);
 export const listPalettes = () => request("/api/palettes");
 export const listReference = () => request("/api/reference");

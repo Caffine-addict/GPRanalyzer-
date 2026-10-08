@@ -17,7 +17,8 @@ from core.contracts import Detection, ScanFrame, SourceCapabilities
 from reason.engine import ReasoningEngine
 from sources.base import ScanSource
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from store.postgres_store import PostgresStore
+from tests.pg import fresh_store
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,9 +61,9 @@ class _FakeLLMClient:
         return _VALID_RESPONSE
 
 
-def _manager(tmp_path: Path, frames_dir: Path, broadcast, reasoning_engine=None) -> tuple[SurveyManager, DuckDBStore]:
+def _manager(tmp_path: Path, frames_dir: Path, broadcast, reasoning_engine=None) -> tuple[SurveyManager, PostgresStore]:
     cfg = _config(frames_dir)
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     source = ReplaySource(cfg.source.replay)
     manager = SurveyManager(
         source=source,
@@ -211,7 +212,7 @@ async def test_stop_survey_cancels_and_marks_stopped(tmp_path: Path) -> None:
             )
 
     cfg = _config(tmp_path)  # unused directory, custom source below
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     manager = SurveyManager(
         source=_SlowSource(),
         source_type="synthetic",
@@ -320,7 +321,7 @@ class _SlowLLMClient:
 @pytest.mark.asyncio
 async def test_stop_survey_cancels_in_flight_reasoning_without_stale_emit(tmp_path: Path) -> None:
     cfg = _config(tmp_path)  # unused directory, custom source below
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     # Long enough that the reasoning task is still genuinely running (not
     # already finished by chance) when stop_survey cancels it.
     engine = ReasoningEngine(_SlowLLMClient(delay_s=0.6), cfg.reasoning)
@@ -371,7 +372,7 @@ class _FailingUpdateStore:
     than crashing, same "must survive" principle applied one layer up.
     """
 
-    def __init__(self, inner: DuckDBStore) -> None:
+    def __init__(self, inner: PostgresStore) -> None:
         self._inner = inner
 
     def save_frame(self, *args, **kwargs):
@@ -404,7 +405,7 @@ async def test_survey_marked_failed_on_unexpected_error_during_reasoning(tmp_pat
     frames_dir = tmp_path / "frames"
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
-    real_store = DuckDBStore(tmp_path / "test.duckdb")
+    real_store = fresh_store()
     failing_store = _FailingUpdateStore(real_store)
     engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
 

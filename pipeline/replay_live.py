@@ -16,7 +16,6 @@ import argparse
 import asyncio
 import os
 import sys
-import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -36,7 +35,8 @@ from pipeline.orchestrator import Orchestrator
 from reason.engine import GroqClient, ReasoningEngine
 from sources.intake import IntakeError
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from store.database import database_url
+from store.postgres_store import PostgresStore
 
 
 def _describe(finding: Finding) -> str:
@@ -85,17 +85,16 @@ async def _run(args: argparse.Namespace) -> int:
         else:
             print(f"{stamp} #{finding_id} reasoning: {finding.what} — {finding.recommended_action}")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        store = DuckDBStore(Path(tmp) / "replay_live.duckdb")
-        orchestrator = Orchestrator(
-            source=source, detector=ClassicalDetector(), store=store, config=config,
-            emit=emit, survey_id="replay-live", reasoning_engine=engine, emit_frame=emit_frame,
-        )
-        try:
-            await orchestrator.run()
-            await orchestrator.wait_for_pending_reasoning()
-        finally:
-            store.close()
+    store = PostgresStore(database_url())
+    orchestrator = Orchestrator(
+        source=source, detector=ClassicalDetector(), store=store, config=config,
+        emit=emit, survey_id=f"replay-live-{int(time.time())}", reasoning_engine=engine, emit_frame=emit_frame,
+    )
+    try:
+        await orchestrator.run()
+        await orchestrator.wait_for_pending_reasoning()
+    finally:
+        store.close()
     print(f"\ndone in {time.monotonic() - start:.2f}s")
     return 0
 

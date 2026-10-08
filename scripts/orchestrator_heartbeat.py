@@ -34,7 +34,8 @@ from detect.model import Detector, ModelLoadError, ModelNotFoundError
 from pipeline.orchestrator import Orchestrator
 from reason.engine import GroqClient, ReasoningEngine
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from store.database import database_url
+from store.postgres_store import PostgresStore
 
 
 class _DetectorWithSyntheticFallback:
@@ -71,7 +72,7 @@ def main() -> int:
     cfg = load_config(Path(__file__).resolve().parent.parent / "config.yaml")
     source = ReplaySource(cfg.source.replay)
     detector = _DetectorWithSyntheticFallback(Detector(cfg.detection))
-    store = DuckDBStore(Path(cfg.store.path).parent / "orchestrator_heartbeat.duckdb")
+    store = PostgresStore(database_url())
 
     api_key = os.environ.get("GROQ_API_KEY")
     reasoning_engine = ReasoningEngine(GroqClient(api_key), cfg.reasoning) if api_key else None

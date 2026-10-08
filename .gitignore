@@ -27,7 +27,6 @@ runs/
 .tmp/
 data/
 output/
-*.duckdb
 
 # Dashboard
 dashboard/**/node_modules/
@@ -49,3 +48,6 @@ datasets/
 Dataset/
 annotations/
 reference/hyperbolas/
+
+# database dumps
+backups/

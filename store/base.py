@@ -1,6 +1,5 @@
-"""The Store interface. All persistence goes through this — no DuckDB (or any storage engine)
-call may appear outside store/duckdb_store.py; that's the seam that lets the backend change
-without touching the orchestrator or API layer.
+"""The Store interface. All persistence goes through this — no SQL may appear outside the store/
+package; that's the seam that lets the backend change without touching the orchestrator or API layer.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ mocked detector (no real YOLO weights exist yet) and a mocked LLM client (no
 real Groq key), asserting: every frame with detections produces findings,
 fast-path emission precedes reasoning emission for each finding, fast-path
 latency stays under config.yaml's target, and findings are actually
-persisted to a real (temp-file) DuckDB store.
+persisted to a real Postgres store (a fresh schema, tests/pg.py).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from pipeline.orchestrator import Orchestrator
 from reason.engine import ReasoningEngine
 from sources.base import ScanSource
 from sources.replay import ReplaySource
-from store.duckdb_store import DuckDBStore
+from tests.pg import fresh_store
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -111,7 +111,7 @@ async def test_orchestrator_end_to_end_with_reasoning(tmp_path: Path, caplog: py
     cfg = _config(frames_dir)
 
     source = ReplaySource(cfg.source.replay)
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     detector = _FakeDetector()
     engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
 
@@ -174,7 +174,7 @@ async def test_orchestrator_without_reasoning_engine_only_emits_created(tmp_path
     _write_fixture_frames(frames_dir, 2)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=ReplaySource(cfg.source.replay),
@@ -200,7 +200,7 @@ async def test_orchestrator_no_weights_skips_frames_without_crashing(tmp_path: P
     _write_fixture_frames(frames_dir, 2)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=ReplaySource(cfg.source.replay),
@@ -224,7 +224,7 @@ async def test_orchestrator_empty_detections_produces_no_findings(tmp_path: Path
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=ReplaySource(cfg.source.replay),
@@ -252,7 +252,7 @@ async def test_orchestrator_reasoning_failure_still_leaves_finding_persisted(tmp
         def complete_json(self, prompt, *, schema, model, temperature, max_tokens, timeout_s, strict):
             raise RuntimeError("network error")
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     engine = ReasoningEngine(_FailingLLMClient(), cfg.reasoning)
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
@@ -290,7 +290,7 @@ async def test_orchestrator_emits_the_real_per_finding_id_not_the_shared_frame_i
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
     created_ids: list[int] = []
     reasoned_ids: list[int] = []
@@ -355,7 +355,7 @@ class _SingleTracesOnlyFrameSource(ScanSource):
 @pytest.mark.asyncio
 async def test_orchestrator_renders_traces_only_frame_via_render_bscan(tmp_path: Path) -> None:
     cfg = _config(tmp_path / "unused")  # replay source unused here, just need a valid Config
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=_SingleTracesOnlyFrameSource(),
@@ -385,7 +385,7 @@ async def test_orchestrator_shares_frame_wide_risk_across_detections(tmp_path: P
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=ReplaySource(cfg.source.replay),
@@ -448,7 +448,7 @@ async def test_orchestrator_one_bad_frame_does_not_abort_the_survey(
 ) -> None:
     good_image = np.full((64, 64), 100, dtype=np.uint8)
     cfg = _config(tmp_path)  # source unused (custom source below), just need a valid Config
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=_OneBadFrameThenGoodSource(good_image),
@@ -485,7 +485,7 @@ async def test_orchestrator_fast_path_does_not_block_on_slow_reasoning(tmp_path:
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     engine = ReasoningEngine(_SlowLLMClient(), cfg.reasoning)
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
@@ -518,7 +518,7 @@ async def test_cancel_pending_reasoning_discards_in_flight_task_without_stale_em
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     engine = ReasoningEngine(_SlowLLMClient(), cfg.reasoning)  # 1.0s delay
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
@@ -570,7 +570,7 @@ async def test_orchestrator_neighbours_uses_identity_not_equality(tmp_path: Path
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=ReplaySource(cfg.source.replay),
@@ -598,7 +598,7 @@ async def test_orchestrator_store_write_happens_before_reasoned_emit(tmp_path: P
     _write_fixture_frames(frames_dir, 1)
     cfg = _config(frames_dir)
 
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     engine = ReasoningEngine(_FakeLLMClient(), cfg.reasoning)
     read_back_at_reasoned_emit: list[Finding] = []
 
@@ -667,7 +667,7 @@ async def test_orchestrator_run_does_not_block_the_event_loop_between_frames(tmp
     # producing — freezes until the survey finishes, silently defeating the
     # entire point of streaming findings as they happen.
     cfg = _config(tmp_path)
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     orchestrator = Orchestrator(
         source=_SlowPacedSource(n_frames=2, delay_s=0.3),
         detector=_FakeDetector(),
@@ -736,7 +736,7 @@ def _line_with_a_strong_reflector() -> tuple[np.ndarray, tuple[float, float, flo
 
 
 async def _created_findings(source: ScanSource, detector, cfg, tmp_path: Path) -> list[Finding]:
-    store = DuckDBStore(tmp_path / "test.duckdb")
+    store = fresh_store()
     emitted: list[tuple[Finding, str]] = []
     orchestrator = Orchestrator(
         source=source, detector=detector, store=store, config=cfg,

@@ -132,12 +132,6 @@ class LatencyConfig:
 
 
 @dataclass(frozen=True)
-class StoreConfig:
-    backend: str
-    path: str
-
-
-@dataclass(frozen=True)
 class ApiConfig:
     # No auth exists anywhere in this API (an accepted internal-tool trust
     # model — see CLAUDE.md), which makes this allowlist the only thing
@@ -158,7 +152,6 @@ class Config:
     reasoning: ReasoningConfig
     source: SourceConfig
     latency: LatencyConfig
-    store: StoreConfig
     api: ApiConfig
 
 
@@ -299,13 +292,6 @@ def _build_latency(d: dict[str, Any]) -> LatencyConfig:
     )
 
 
-def _build_store(d: dict[str, Any]) -> StoreConfig:
-    return StoreConfig(
-        backend=_require(d, "backend", "store"),
-        path=_require(d, "path", "store"),
-    )
-
-
 def _build_api(d: dict[str, Any]) -> ApiConfig:
     return ApiConfig(cors_origins=tuple(_require(d, "cors_origins", "api")))
 
@@ -327,7 +313,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         reasoning=_build_reasoning(_require_mapping(raw, "reasoning", "root")),
         source=_build_source(_require_mapping(raw, "source", "root")),
         latency=_build_latency(_require_mapping(raw, "latency", "root")),
-        store=_build_store(_require_mapping(raw, "store", "root")),
         api=_build_api(_require_mapping(raw, "api", "root")),
     )
     # The classical backend's confidence is a curve-fit R^2. Only the v1_candidate prompt tells
