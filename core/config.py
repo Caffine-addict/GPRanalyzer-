@@ -296,7 +296,12 @@ def _build_api(d: dict[str, Any]) -> ApiConfig:
     return ApiConfig(cors_origins=tuple(_require(d, "cors_origins", "api")))
 
 
-def load_config(path: str | Path = "config.yaml") -> Config:
+# The project's own config, found from this file rather than the working directory, so a server
+# started from any folder (or the packaged app, which ships config.yaml beside core/) still finds it.
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.yaml"
+
+
+def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"config file not found: {p}")

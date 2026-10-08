@@ -290,3 +290,9 @@ def test_missing_key_raises_config_error(path: tuple[str, ...], tmp_path: Path) 
     raw = _delete_path(_raw_config(), path)
     with pytest.raises(ConfigError, match=path[-1]):
         load_config(_write(raw, tmp_path))
+
+
+def test_the_default_config_is_found_from_any_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Studio's assistant loads the default; started from another folder it used to fail with a 500
+    monkeypatch.chdir(tmp_path)
+    assert load_config().api.cors_origins
