@@ -43,10 +43,16 @@ export function imageUrl(job, channel, processing, display, size) {
   return `/api/jobs/${encodeURIComponent(job)}/channels/${channel}/image.png?${query}`;
 }
 
-/** A few metres of radargram either side of a position along a line, with that position ticked. */
-export function peekUrl(job, channel, chainageM, halfSpanM = 1.5) {
-  const query = new URLSearchParams({ background_removal: "mean", gain: "agc", height: "150",
-    from_m: Math.max(0, chainageM - halfSpanM).toFixed(3), to_m: (chainageM + halfSpanM).toFixed(3), mark_m: chainageM.toFixed(3) });
+/**
+ * A few metres of radargram either side of a position along a line, with that position ticked.
+ * `view` is Interpret's current processing and display, so the preview looks like the line will
+ * when it is opened there.
+ */
+export function peekUrl(job, channel, chainageM, view, halfSpanM = 1.5) {
+  const query = viewParams(view.processing, view.display, { height: 180 });
+  query.set("from_m", Math.max(0, chainageM - halfSpanM).toFixed(3));
+  query.set("to_m", (chainageM + halfSpanM).toFixed(3));
+  query.set("mark_m", chainageM.toFixed(3));
   return `/api/jobs/${encodeURIComponent(job)}/channels/${encodeURIComponent(channel)}/image.png?${query}`;
 }
 

@@ -215,14 +215,18 @@ def channel_image(request: Request, job_name: str, extension: str) -> Response:
     mark = params.pop("mark_m", None)
     processing, settings = _split_query(params)
     processed, info, _chain = _processed(job_dir, extension, processing)
-    first = 0
-    if span != (None, None):  # a stretch of the line, e.g. the field map's hover preview
-        stretch = _trace_span(span, info.trace_spacing_m, processed.shape[1])
-        processed, first = processed[:, stretch], stretch.start
     try:
-        image = render.to_rgb(processed, settings)
-        if mark is not None:
-            image = _mark_position(image, float(mark) / info.trace_spacing_m - first, processed.shape[1])
+        if span == (None, None) and mark is None:
+            image = render.to_rgb(processed, settings)
+        else:  # a stretch of the line and/or a ticked position, e.g. the field map's hover preview
+            # Rendered whole, then cut: contrast is set by the whole line, so the stretch looks
+            # exactly as it does in the full view rather than re-stretched to its own range.
+            stretch = (slice(0, processed.shape[1]) if span == (None, None)
+                       else _trace_span(span, info.trace_spacing_m, processed.shape[1]))
+            image = render.to_rgb(processed, replace(settings, width_px=None, height_px=None))[:, stretch]
+            if mark is not None:
+                image = _mark_position(image, float(mark) / info.trace_spacing_m - stretch.start, image.shape[1])
+            image = render.resize(image, settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(

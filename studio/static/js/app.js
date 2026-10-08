@@ -528,7 +528,7 @@ function installMenus() {
 
 async function boot() {
   modal.init();
-  fieldMode.init({ openAt });
+  fieldMode.init({ openAt, view: () => ({ processing: getState().processing, display: getState().display }) });
   for (const button of document.querySelectorAll(".mode-switch .mode")) {
     button.addEventListener("click", () => setMode(button.dataset.mode));
   }

@@ -67,8 +67,11 @@ def normalise(data: np.ndarray, settings: DisplaySettings) -> np.ndarray:
 def to_rgb(data: np.ndarray, settings: DisplaySettings) -> np.ndarray:
     """Render a processed radargram as an RGB image at the requested size."""
     indices = normalise(data, settings)
-    coloured = palette_module.lut(settings.palette)[indices]  # (h, w, 3) RGB
+    return resize(palette_module.lut(settings.palette)[indices], settings)  # (h, w, 3) RGB
 
+
+def resize(coloured: np.ndarray, settings: DisplaySettings) -> np.ndarray:
+    """An RGB image at the size the settings ask for (native when unset)."""
     # `is None` rather than a falsy check: width_px=0 is a client asking for a
     # zero-width image, which is a mistake worth reporting, not a request for
     # the native size.

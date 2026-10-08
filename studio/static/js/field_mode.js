@@ -179,11 +179,11 @@ function applyLayers() {
 function peek(job, channel, chainage, title) {
   const status = el("span", { class: "fpeek-status", text: "Loading radargram…" });
   const img = el("img", { class: "fpeek-img", alt: `Radargram of ${job} ${channel} around ${fmt(chainage)} m`,
-    src: api.peekUrl(job, channel, chainage),
+    src: api.peekUrl(job, channel, chainage, handlers.view()),
     onload: () => status.remove(), onerror: () => { img.remove(); status.textContent = "No radargram for this point."; } });
   return el("div", { class: "fpeek" }, [
     el("b", { text: title }),
-    el("span", { class: "fpeek-sub", text: `${job} · ${channel} · ${fmt(chainage)} m along · ±1.5 m shown, ticks mark the point` }),
+    el("span", { class: "fpeek-sub", text: `${job} · ${channel} · ${fmt(chainage)} m along · ±1.5 m shown with Interpret\u2019s current processing; ticks mark the point` }),
     img, status]);
 }
 

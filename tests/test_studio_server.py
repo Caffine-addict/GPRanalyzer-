@@ -97,6 +97,8 @@ def test_the_image_can_be_cropped_to_a_stretch_of_the_line(client: TestClient, j
     assert crop.status_code == 200
     width, height = Image.open(io.BytesIO(crop.content)).size
     assert height == whole.size[1] and 1 < width < whole.size[0]
+    # the stretch is the full view's own pixels, not re-contrasted to its own range
+    assert np.array_equal(np.asarray(Image.open(io.BytesIO(crop.content))), np.asarray(whole)[:, :width])
     marked = client.get(f"/api/jobs/{job}/channels/RAD/image.png", params={"from_m": 0, "to_m": 0.5, "mark_m": 0.25})
     pixels = np.asarray(Image.open(io.BytesIO(marked.content)))
     assert (pixels[0] == 255).all(axis=1).sum() >= 1 and (pixels[height // 2] == np.asarray(
