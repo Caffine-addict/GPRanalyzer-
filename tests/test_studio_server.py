@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -84,6 +85,25 @@ def test_image_endpoint_accepts_the_whole_processing_chain(client: TestClient, j
         },
     )
     assert response.status_code == 200
+
+
+def test_the_image_can_be_cropped_to_a_stretch_of_the_line(client: TestClient, job: str) -> None:
+    import io
+
+    from PIL import Image
+
+    whole = Image.open(io.BytesIO(client.get(f"/api/jobs/{job}/channels/RAD/image.png").content))
+    crop = client.get(f"/api/jobs/{job}/channels/RAD/image.png", params={"from_m": 0, "to_m": 0.5})
+    assert crop.status_code == 200
+    width, height = Image.open(io.BytesIO(crop.content)).size
+    assert height == whole.size[1] and 1 < width < whole.size[0]
+    marked = client.get(f"/api/jobs/{job}/channels/RAD/image.png", params={"from_m": 0, "to_m": 0.5, "mark_m": 0.25})
+    pixels = np.asarray(Image.open(io.BytesIO(marked.content)))
+    assert (pixels[0] == 255).all(axis=1).sum() >= 1 and (pixels[height // 2] == np.asarray(
+        Image.open(io.BytesIO(crop.content)))[height // 2]).all()  # ticks at the edge, the data untouched
+    for bad in ({"from_m": 0}, {"from_m": "x", "to_m": 1}, {"from_m": 1e6, "to_m": 2e6},
+                {"from_m": 0, "to_m": 0.5, "mark_m": 9}, {"mark_m": "x"}):
+        assert client.get(f"/api/jobs/{job}/channels/RAD/image.png", params=bad).status_code == 422
 
 
 def test_a_checkbox_switched_off_is_not_read_as_on(client: TestClient, job: str) -> None:

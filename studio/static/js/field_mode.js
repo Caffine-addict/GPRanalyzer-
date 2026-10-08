@@ -125,6 +125,8 @@ function drawMap(fit) {
     groups[key] = L.featureGroup();
   }
   const onPick = (feature) => (event) => { L.DomEvent.stopPropagation(event); select(feature); };
+  const peekAt = (marker, job, channel, chainage, title) => marker.bindTooltip(() => peek(job, channel, chainage, title),
+    { direction: "top", offset: [0, -8], className: "fpeek-tip", opacity: 1 });
   for (const f of model.field.features) {
     const p = f.properties;
     if (p.kind === "survey_line") {
@@ -136,8 +138,9 @@ function drawMap(fit) {
     } else if (p.kind === "target") {
       const [lon, lat] = f.geometry.coordinates;
       const strong = p.corroboration >= 2;
-      L.circleMarker([lat, lon], { radius: strong ? 5 : 3.5, color: "#0b0d11", weight: 1, fillColor: COLOURS.target,
-        fillOpacity: strong ? 0.95 : 0.45 }).on("click", onPick(f)).addTo(groups.targets);
+      peekAt(L.circleMarker([lat, lon], { radius: strong ? 5 : 3.5, color: "#0b0d11", weight: 1, fillColor: COLOURS.target,
+        fillOpacity: strong ? 0.95 : 0.45 }), p.job, p.channels[0], p.chainage_m,
+      `Suggestion ${shortId(p.id)} · ${fmt(p.depth_m)} m deep`).on("click", onPick(f)).addTo(groups.targets);
     }
   }
   for (const f of model.dig?.features ?? []) {
@@ -146,7 +149,8 @@ function drawMap(fit) {
     const colour = p.status === "confirmed" ? COLOURS.confirmed : COLOURS.interpreted;
     L.circle([lat, lon], { radius: p.horizontal_error_m, color: colour, weight: 1, dashArray: "4 4", fill: false, interactive: false })
       .addTo(groups.errors);
-    L.circleMarker([lat, lon], { radius: 8, color: "#0b0d11", weight: 2, fillColor: colour, fillOpacity: 1 })
+    peekAt(L.circleMarker([lat, lon], { radius: 8, color: "#0b0d11", weight: 2, fillColor: colour, fillOpacity: 1 }),
+      p.line, p.channel, p.chainage_m, `${p.identity || "Dig item"} · ${fmt(p.depth_range_m[0])}–${fmt(p.depth_range_m[1])} m`)
       .on("click", onPick(f)).addTo(groups.dig);
   }
   applyLayers();
@@ -169,6 +173,18 @@ function applyLayers() {
   }
   if (model.layers.osm && !map.hasLayer(groups.osm)) groups.osm.addTo(map).bringToBack();
   if (!model.layers.osm && map.hasLayer(groups.osm)) map.removeLayer(groups.osm);
+}
+
+/** The hover preview: the radargram around a point, or a plain note when the line has none to show. */
+function peek(job, channel, chainage, title) {
+  const status = el("span", { class: "fpeek-status", text: "Loading radargram…" });
+  const img = el("img", { class: "fpeek-img", alt: `Radargram of ${job} ${channel} around ${fmt(chainage)} m`,
+    src: api.peekUrl(job, channel, chainage),
+    onload: () => status.remove(), onerror: () => { img.remove(); status.textContent = "No radargram for this point."; } });
+  return el("div", { class: "fpeek" }, [
+    el("b", { text: title }),
+    el("span", { class: "fpeek-sub", text: `${job} · ${channel} · ${fmt(chainage)} m along · ±1.5 m shown, ticks mark the point` }),
+    img, status]);
 }
 
 /* ---------- actions ---------- */

@@ -26,6 +26,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
@@ -183,14 +184,45 @@ def job_detail(request: Request, job_name: str) -> dict:
     }
 
 
+def _trace_span(span: tuple[str | None, str | None], spacing_m: float, n_traces: int) -> slice:
+    """Traces from `from_m` to `to_m` along the line, clipped to the line; both are required."""
+    try:
+        start, stop = (float(v) for v in span)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="from_m and to_m must both be numbers (metres)") from exc
+    first, last = max(0, int(start / spacing_m)), min(n_traces, int(stop / spacing_m) + 1)
+    if not first < last:
+        raise HTTPException(status_code=422, detail="that stretch is not on the line")
+    return slice(first, last)
+
+
+def _mark_position(image: np.ndarray, trace: float, n_traces: int) -> np.ndarray:
+    """Ticks at the top and bottom edges over one trace, leaving the radargram between them untouched."""
+    column = int((trace + 0.5) * image.shape[1] / n_traces)
+    if not 0 <= column < image.shape[1]:
+        raise ValueError("the marked position is outside the image")
+    marked, tick = image.copy(), max(3, image.shape[0] // 12)
+    marked[:tick, max(0, column - 1):column + 2] = marked[-tick:, max(0, column - 1):column + 2] = 255
+    return marked
+
+
 @app.get("/api/jobs/{job_name}/channels/{extension}/image.png")
 def channel_image(request: Request, job_name: str, extension: str) -> Response:
     """The processed radargram as a PNG, at whatever size the canvas asked for."""
     job_dir = _job(request, job_name)
-    processing, settings = _split_query(dict(request.query_params))
-    processed, _info, _chain = _processed(job_dir, extension, processing)
+    params = dict(request.query_params)
+    span = params.pop("from_m", None), params.pop("to_m", None)
+    mark = params.pop("mark_m", None)
+    processing, settings = _split_query(params)
+    processed, info, _chain = _processed(job_dir, extension, processing)
+    first = 0
+    if span != (None, None):  # a stretch of the line, e.g. the field map's hover preview
+        stretch = _trace_span(span, info.trace_spacing_m, processed.shape[1])
+        processed, first = processed[:, stretch], stretch.start
     try:
         image = render.to_rgb(processed, settings)
+        if mark is not None:
+            image = _mark_position(image, float(mark) / info.trace_spacing_m - first, processed.shape[1])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(

@@ -863,3 +863,12 @@ select.finput { padding-right: 6px; }
 .finput.small { height: 28px; width: auto; }
 .ftable th { top: 45px; }
 .fpill.warnpill { color: var(--warn); margin-left: 6px; }
+
+/* field map: radargram preview on hover */
+.leaflet-tooltip.fpeek-tip { background: var(--panel, #161a21); color: var(--text, #e6e9ef); border: 1px solid var(--border, #2a303b);
+  border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); white-space: normal; }
+.leaflet-tooltip.fpeek-tip::before { border-top-color: var(--border, #2a303b); }
+.fpeek { display: flex; flex-direction: column; gap: 4px; width: 260px; }
+.fpeek b { font-size: 12.5px; }
+.fpeek-sub, .fpeek-status { font-size: 11px; color: var(--text-dim, #9aa3b2); }
+.fpeek-img { width: 260px; height: 150px; object-fit: fill; image-rendering: pixelated; border-radius: 4px; background: #000; }
