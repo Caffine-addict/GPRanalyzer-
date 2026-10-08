@@ -10,15 +10,12 @@
  */
 
 import { activeChannel, activeVelocity, getState } from "./state.js";
+import { token } from "./theme.js";
 
 export const GUTTER_LEFT = 62;
 export const GUTTER_TOP = 24;
 
 const COLOURS = {
-  gutter: "#09090b",
-  gutterLine: "#27272a",
-  tick: "#52525b",
-  label: "#a1a1aa",
   crosshair: "#3b82f6",
   pick: "#f59e0b",
   fit: "#22c55e",
@@ -26,6 +23,11 @@ const COLOURS = {
   measure: "#f97316",
   marquee: "#3b82f6",
 };
+
+/** The rulers' frame follows the light/dark theme; everything drawn over the data keeps its colour. */
+const frame = () => ({
+  gutter: token("--bg-sink"), gutterLine: token("--line"), tick: token("--text-faint"), label: token("--text-dim"),
+});
 
 /* Candidate boxes are tinted by the shape the diagnoser measured, matching the
  * legend the Phase-1 tooling already used. Grey means "no class suggested" —
@@ -192,14 +194,15 @@ export function draw() {
 }
 
 function drawRulers(state, channel) {
+  const ruler = frame();
   const plot = plotRect();
   const { view } = state;
   const velocity = activeVelocity(state);
 
-  ctx.fillStyle = COLOURS.gutter;
+  ctx.fillStyle = ruler.gutter;
   ctx.fillRect(0, 0, canvas.clientWidth, GUTTER_TOP);
   ctx.fillRect(0, 0, GUTTER_LEFT, canvas.clientHeight);
-  ctx.strokeStyle = COLOURS.gutterLine;
+  ctx.strokeStyle = ruler.gutterLine;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(plot.x + 0.5, 0);
@@ -209,7 +212,7 @@ function drawRulers(state, channel) {
   ctx.stroke();
 
   ctx.font = "10px ui-monospace, Menlo, monospace";
-  ctx.fillStyle = COLOURS.label;
+  ctx.fillStyle = ruler.label;
 
   // Distance ruler — metres along the line, from the wheel encoder.
   const metresLo = view.originTrace * channel.trace_spacing_m;
@@ -223,7 +226,7 @@ function drawRulers(state, channel) {
     // Keep clear of the gutters: a centred label straddling the axis corner
     // gets half-clipped and reads as a different number.
     if (x < plot.x + 16 || x > plot.x + plot.w - 16) continue;
-    ctx.strokeStyle = COLOURS.tick;
+    ctx.strokeStyle = ruler.tick;
     ctx.beginPath();
     ctx.moveTo(Math.round(x) + 0.5, GUTTER_TOP - 5);
     ctx.lineTo(Math.round(x) + 0.5, GUTTER_TOP);
@@ -245,18 +248,18 @@ function drawRulers(state, channel) {
   for (let ns = Math.ceil(nsLo / stepNs) * stepNs; ns <= nsHi; ns += stepNs) {
     const { y } = dataToScreen(view, 0, t0 + ns / channel.sample_interval_ns);
     if (y < plot.y + 10 || y > plot.y + plot.h - 4) continue;
-    ctx.strokeStyle = COLOURS.tick;
+    ctx.strokeStyle = ruler.tick;
     ctx.beginPath();
     ctx.moveTo(GUTTER_LEFT - 5, Math.round(y) + 0.5);
     ctx.lineTo(GUTTER_LEFT, Math.round(y) + 0.5);
     ctx.stroke();
     if (velocity.value) {
-      ctx.fillStyle = COLOURS.label;
+      ctx.fillStyle = ruler.label;
       ctx.fillText(`${((velocity.value * ns) / 2).toFixed(2)}m`, GUTTER_LEFT - 8, y - 5);
-      ctx.fillStyle = COLOURS.tick;
+      ctx.fillStyle = ruler.tick;
       ctx.fillText(`${ns.toFixed(1)}ns`, GUTTER_LEFT - 8, y + 5);
     } else {
-      ctx.fillStyle = COLOURS.label;
+      ctx.fillStyle = ruler.label;
       ctx.fillText(`${ns.toFixed(1)}ns`, GUTTER_LEFT - 8, y);
     }
   }
@@ -264,16 +267,16 @@ function drawRulers(state, channel) {
   // Cover the axis corner last so no ruler label can bleed into it, then name
   // the units. Depth is listed first because it is the primary label, but the
   // time it derives from is always shown beneath it — see the loop above.
-  ctx.fillStyle = COLOURS.gutter;
+  ctx.fillStyle = ruler.gutter;
   ctx.fillRect(0, 0, GUTTER_LEFT, GUTTER_TOP);
-  ctx.strokeStyle = COLOURS.gutterLine;
+  ctx.strokeStyle = ruler.gutterLine;
   ctx.beginPath();
   ctx.moveTo(GUTTER_LEFT - 0.5, 0);
   ctx.lineTo(GUTTER_LEFT - 0.5, GUTTER_TOP);
   ctx.moveTo(0, GUTTER_TOP - 0.5);
   ctx.lineTo(GUTTER_LEFT, GUTTER_TOP - 0.5);
   ctx.stroke();
-  ctx.fillStyle = COLOURS.tick;
+  ctx.fillStyle = ruler.tick;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   ctx.fillText(velocity.value ? "m / ns" : "ns", GUTTER_LEFT - 8, GUTTER_TOP / 2);

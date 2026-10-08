@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPR Studio</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23101318' stroke='%234f9cff' stroke-width='2'/%3E%3Cpath d='M12 12 L20 7' stroke='%234f9cff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<script>/* theme before first paint: the saved choice, else the device's */
+try { const t = localStorage.getItem("gpr-theme"); document.documentElement.dataset.theme = t === "light" || t === "dark" ? t : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch { document.documentElement.dataset.theme = "dark"; }</script>
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/studio.css">
 </head>
@@ -13,6 +15,8 @@
 <!-- Icon sprite: one stroke style, drawn on a 24-unit grid, used everywhere via <use>. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
     <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6.5-6.5"/></symbol>
     <symbol id="i-pan" viewBox="0 0 24 24"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></symbol>
     <symbol id="i-pick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5"/></symbol>
@@ -52,6 +56,7 @@
   </div>
   <div class="menubar-right">
     <span class="job-badge" id="jobBadge">no line open</span>
+    <button class="menu icon-btn" id="themeToggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="i"><use href="#i-sun"/></svg></button>
     <form class="account" method="post" action="/logout">
       <span class="account-name" id="accountName" title="Signed in"></span>
       <button class="menu" type="submit">Sign out</button>

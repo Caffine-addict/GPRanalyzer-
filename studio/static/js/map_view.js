@@ -241,7 +241,7 @@ export function onMapClick(handler) {
 
 /* ---------- field mode ---------- */
 
-const SITE_COLOURS = { line: "#a1a1aa", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa" };
+const SITE_COLOURS = { line: "#71717a", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa" };
 
 function siteLayer(field, dig) {
   const group = L.featureGroup();

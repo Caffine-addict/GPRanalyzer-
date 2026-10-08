@@ -14,7 +14,7 @@ import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 
 const L = window.L;
-const COLOURS = { line: "#a1a1aa", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
+const COLOURS = { line: "#71717a", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
 const QUICK_NAMES = ["Water pipe", "Sewer", "Storm drain", "Electric cable", "Telecom duct", "Gas pipe", "Unknown utility"];
 const NAME_KEY = "gpr-supervisor";
 

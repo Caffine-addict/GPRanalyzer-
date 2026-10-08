@@ -10,6 +10,8 @@
  * the wiggle always shows the same signal as the picture above it.
  */
 
+import { token } from "./theme.js";
+
 const canvas = document.getElementById("ascan");
 const ctx = canvas.getContext("2d");
 const label = document.getElementById("ascanLabel");
@@ -30,7 +32,7 @@ export function draw(ascan, highlightSample) {
 
   if (!ascan?.samples?.length) {
     label.textContent = "—";
-    ctx.fillStyle = "#52525b";
+    ctx.fillStyle = token("--text-faint");
     ctx.font = "11px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("move the cursor over the radargram", width / 2, height / 2);
@@ -45,7 +47,7 @@ export function draw(ascan, highlightSample) {
   const midY = height / 2;
   const stepX = width / (samples.length - 1);
 
-  ctx.strokeStyle = "#27272a";
+  ctx.strokeStyle = token("--line");
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, midY + 0.5);

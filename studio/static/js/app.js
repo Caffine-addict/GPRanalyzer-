@@ -6,6 +6,7 @@
  */
 
 import * as api from "./api.js";
+import * as theme from "./theme.js";
 import * as ascan from "./ascan.js";
 import * as docks from "./docks.js";
 import * as documents from "./documents.js";
@@ -528,6 +529,8 @@ function installMenus() {
 
 async function boot() {
   modal.init();
+  theme.initToggle(document.getElementById("themeToggle"));
+  window.addEventListener("gpr-theme", () => setState({})); // repaint the canvases in the new colours
   api.whoAmI().then(({ username }) => { document.getElementById("accountName").textContent = username; }).catch(() => {});
   fieldMode.init({ openAt, view: () => ({ processing: getState().processing, display: getState().display }) });
   for (const button of document.querySelectorAll(".mode-switch .mode")) {

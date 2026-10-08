@@ -13,6 +13,7 @@
  * in the hole survives. Found / Not found / Dug go back as field reports: the excavation truth.
  */
 
+import { initToggle } from "./theme.js";
 import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 import { arrowAngle, guidance } from "./geo_nav.js";
@@ -268,4 +269,5 @@ async function start() {
   }
 }
 
+initToggle(document.getElementById("themeToggle"));
 start();

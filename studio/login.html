@@ -5,11 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>Sign in · GPR Studio</title>
+<script>/* theme before first paint: the saved choice, else the device's */
+try { const t = localStorage.getItem("gpr-theme"); document.documentElement.dataset.theme = t === "light" || t === "dark" ? t : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch { document.documentElement.dataset.theme = "dark"; }</script>
 <style>
   :root {
     color-scheme: dark;
     --bg: #09090b; --panel: #111113; --line: #27272a; --line-strong: #3f3f46;
-    --text: #fafafa; --dim: #a1a1aa; --faint: #71717a; --accent: #3b82f6; --accent-hover: #2563eb;
+    --text: #fafafa; --dim: #a1a1aa; --faint: #71717a; --accent: #3b82f6; --accent-hover: #2563eb; --error: #fca5a5;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #fafafa; --panel: #ffffff; --line: #e4e4e7; --line-strong: #d4d4d8;
+    --text: #09090b; --dim: #52525b; --faint: #71717a; --accent: #2563eb; --accent-hover: #1d4ed8; --error: #b91c1c;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
@@ -39,7 +46,7 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .message {
     margin: 0 0 16px; padding: 9px 12px; border-radius: 6px; font-size: 13px;
-    color: #fca5a5; background: rgba(239, 68, 68, .1); border: 1px solid rgba(239, 68, 68, .3);
+    color: var(--error); background: rgba(239, 68, 68, .1); border: 1px solid rgba(239, 68, 68, .3);
   }
   .foot { margin-top: 22px; color: var(--faint); font-size: 12px; }
 </style>

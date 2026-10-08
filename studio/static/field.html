@@ -4,18 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GPR Studio — Field</title>
+<script>/* theme before first paint: the saved choice, else the device's */
+try { const t = localStorage.getItem("gpr-theme"); document.documentElement.dataset.theme = t === "light" || t === "dark" ? t : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch { document.documentElement.dataset.theme = "dark"; }</script>
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <style>
   :root { --bg: #09090b; --panel: #18181b; --line: #27272a; --text: #fafafa; --muted: #a1a1aa;
-          --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444; --accent: #3b82f6; }
+          --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444; --accent: #3b82f6; --violet: #a78bfa; --field: #09090b;
+          --bad-bg: #2a1215; --bad-text: #fca5a5; --warn-bg: #2a1f0a; --warn-text: #fcd34d; color-scheme: dark; }
+  /* light: easier to read in direct sun */
+  :root[data-theme="light"] { --bg: #ffffff; --panel: #f4f4f5; --line: #d4d4d8; --text: #09090b; --muted: #52525b;
+          --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --violet: #7c3aed; --field: #ffffff;
+          --bad-bg: #fee2e2; --bad-text: #991b1b; --warn-bg: #fef3c7; --warn-text: #92400e; color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  header { padding: calc(env(safe-area-inset-top, 0px) + 10px) 14px 10px; border-bottom: 1px solid var(--line); }
+  header { position: relative; padding: calc(env(safe-area-inset-top, 0px) + 10px) 56px 10px 14px; border-bottom: 1px solid var(--line); }
+  .theme { position: absolute; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 8px); width: 40px; height: 40px;
+           display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   h1 { font-size: 17px; margin: 0; }
   .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .banner { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
-  .banner.bad { background: #2a1215; color: #fca5a5; }
-  .banner.warn { background: #2a1f0a; color: #fcd34d; }
+  .banner.bad { background: var(--bad-bg); color: var(--bad-text); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn-text); }
   #map { height: 38vh; min-height: 220px; }
   main { padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 16px); display: grid; gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
@@ -29,17 +39,22 @@
               border-radius: 10px; padding: 10px 12px; font: inherit; display: flex; justify-content: space-between; gap: 8px; }
   li button.selected { border-color: var(--accent); }
   .pill { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
-  .confirmed { color: var(--ok); } .interpreted { color: #a78bfa; }
+  .confirmed { color: var(--ok); } .interpreted { color: var(--violet); }
   .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
   .actions button, .save { min-height: 48px; border-radius: 10px; border: 0; font: inherit; font-weight: 600; color: #09090b; }
   .found { background: var(--ok); } .notfound { background: var(--bad); } .dug { background: var(--accent); }
-  input { width: 100%; min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: #09090b; color: var(--text);
+  input { width: 100%; min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--field); color: var(--text);
           padding: 8px 10px; font: inherit; margin-top: 6px; }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+</defs></svg>
 <header>
+  <button class="theme" id="themeToggle" type="button" aria-label="Switch to light mode"><svg><use href="#i-sun"/></svg></button>
   <h1 id="title">Field view</h1>
   <div class="sub" id="gps">Waiting for your position…</div>
   <div id="banners"></div>
