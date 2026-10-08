@@ -83,7 +83,7 @@ async def refuse_cross_site_writes(request: Request, call_next):  # type: ignore
     open (SameSite=Lax stops most, not same-site ones), and those skip CORS preflight. So any write
     a browser marks as coming from elsewhere is refused, the sign-in form included. Requests with
     neither header (curl, scripts, the test client) are not from a browser page and pass. Hosts are
-    compared, not schemes: behind an HTTPS proxy (Tailscale) the page is https, the server sees http.
+    compared, not schemes: behind an HTTPS proxy the page is https, the server sees http.
     """
     if request.method not in _SAFE_METHODS:
         fetch_site = request.headers.get("sec-fetch-site")

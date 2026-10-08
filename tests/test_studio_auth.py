@@ -152,10 +152,10 @@ def test_a_sign_in_posted_from_another_site_is_refused(client: TestClient) -> No
 
 
 def test_through_the_https_proxy_the_cookie_is_secure_and_the_page_may_write(auth: Auth) -> None:
-    # Tailscale serves https://<machine>.ts.net and forwards to 127.0.0.1 over http
-    proxied = TestClient(app, base_url="https://studio.example.ts.net", follow_redirects=False)
+    # an HTTPS proxy on this machine serves https://studio.example.net and forwards to 127.0.0.1 over http
+    proxied = TestClient(app, base_url="https://studio.example.net", follow_redirects=False)
     response = proxied.post("/login", data={"username": "alice", "password": PASSWORD},
-                            headers={"origin": "https://studio.example.ts.net"})
+                            headers={"origin": "https://studio.example.net"})
     assert response.status_code == 303 and "Secure" in response.headers["set-cookie"]
 
 

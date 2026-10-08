@@ -42,8 +42,8 @@ def main(argv: list[str]) -> int:
     app.state.dataset_dir = dataset_dir
     print(f"GPR Studio — dataset: {dataset_dir.resolve()}")
     print(f"open http://127.0.0.1:{DEFAULT_PORT}")
-    # Loopback only: other devices reach it through Tailscale's HTTPS proxy (docs/HOSTING.md), whose
-    # forwarded headers uvicorn trusts from 127.0.0.1 by default, so sign-ins log the real address.
+    # Loopback only: other devices reach it through an HTTPS proxy on this machine (docs/HOSTING.md),
+    # whose forwarded headers uvicorn trusts from 127.0.0.1 by default, so sign-ins log the real address.
     uvicorn.run(app, host="127.0.0.1", port=DEFAULT_PORT, log_level="warning")
     return 0
 

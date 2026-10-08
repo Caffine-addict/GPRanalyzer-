@@ -129,7 +129,7 @@ model had nothing to say.
 - **The Studio needs a sign-in for everything** (`studio/auth.py`), and fails closed (503) without a
   login database. Argon2id password hashes, SHA-256 of session tokens, every attempt in
   `login_events`, lock-out after 5 failures per name / 20 per address in 15 min. Accounts:
-  `python -m studio.users`. Hosting is one PC + `tailscale serve` (docs/HOSTING.md).
+  `python -m studio.users`. Remote access: being chosen (Tailscale tried and removed); docs/HOSTING.md.
 - Tests run signed in as a stand-in user (tests/conftest.py); `@pytest.mark.real_auth` tests use the
   real thing.
 
