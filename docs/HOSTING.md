@@ -11,13 +11,17 @@ mode. Everyone signs in with their own account, and every attempt is logged in P
    from `.env` (see `.env.example`). It listens on 127.0.0.1 only.
 2. **Accounts**, one per person, never shared:
    `.venv/bin/python -m studio.users add <name>`. Passwords are typed at a hidden prompt, 12+ characters.
-3. **Start the Studio**: `.venv/bin/python -m studio` (port 8500). It refuses to start without the
-   database, and refuses every page without a sign-in.
-4. **Tailscale**: `brew install --cask tailscale-app` (asks for your Mac password), open
-   Tailscale, sign in. In the admin console (login.tailscale.com) under **DNS**, turn on
+3. **Run the Studio as a service** (starts at login, restarts if it stops):
+   `deploy/macos/install_studio_service.sh`. Log: `~/Library/Logs/GPRStudio/studio.log`. It refuses to
+   start without the database, and refuses every page without a sign-in. Docker Desktop must be set
+   to start at login so Postgres is there after a reboot.
+4. **Tailscale, no admin password needed**: `brew install tailscale`, then
+   `deploy/macos/install_tailscale_service.sh` (user-mode daemon as a login service). Sign this
+   machine in: `tailscale --socket="$HOME/Library/Application Support/GPRStudio/tailscale/tailscaled.sock" up --hostname=gpr-studio`
+   and open the link it prints. In the admin console (login.tailscale.com) under **DNS**, turn on
    **MagicDNS** and **HTTPS Certificates**.
 5. **Publish to the tailnet**: `scripts/serve_tailnet.sh`. It prints the address,
-   `https://<this-machine>.<tailnet>.ts.net`.
+   `https://gpr-studio.<tailnet>.ts.net`.
 6. **Phones and laptops**: install Tailscale, sign in to the same tailnet (or share this machine
    with them from the admin console), open the address, sign in to the Studio.
 
@@ -30,7 +34,8 @@ mode. Everyone signs in with their own account, and every attempt is logged in P
 | New password (signs them out everywhere) | `python -m studio.users passwd NAME` |
 | Block someone now | `python -m studio.users disable NAME` |
 | Back up the database | `deploy/postgres/backup.sh` (writes `backups/`, gitignored) |
-| Stop sharing | `tailscale serve reset` |
+| Stop sharing | `tailscale --socket="$HOME/Library/Application Support/GPRStudio/tailscale/tailscaled.sock" serve reset` |
+| Restart the Studio after an update | `launchctl kickstart -k gui/$(id -u)/com.gprstudio.studio` |
 
 ## What protects what
 
