@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from store.auth_store import AuthStore
 from store.database import DatabaseNotConfiguredError, database_url
+from store.label_store import LabelStore
 from studio.auth import Auth
 from studio.server import app
 from studio.session import DEFAULT_DATASET_DIR
@@ -33,6 +34,7 @@ def main(argv: list[str]) -> int:
     load_dotenv()
     try:
         app.state.auth = Auth(AuthStore(database_url()))
+        app.state.labels = LabelStore(database_url())
     except DatabaseNotConfiguredError as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
         return 1

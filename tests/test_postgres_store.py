@@ -382,7 +382,8 @@ def test_migrations_are_idempotent_across_reconnects() -> None:
 
 def test_schema_migration_recorded(store: PostgresStore) -> None:
     rows = _sql(store, "SELECT version FROM schema_migrations ORDER BY version")
-    assert rows == [("001_findings",), ("002_logins",)]
+    files = sorted(f.stem for f in (Path(__file__).resolve().parents[1] / "store" / "migrations").glob("*.sql"))
+    assert [r[0] for r in rows] == files and "001_findings" in files  # every migration applied, recorded once
 
 
 def test_migration_sort_key_orders_numerically_not_lexicographically() -> None:

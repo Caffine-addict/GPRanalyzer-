@@ -181,3 +181,24 @@ export const siteFieldReports = (name) => request(`${site(name)}/field_reports`)
 export const confirmSuggestion = (name, body) => request(`${site(name)}/confirm`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
+
+/* ---------- verifying targets for training (studio/verify.py) ---------- */
+
+export const verifySites = () => request("/api/verify/sites");
+export const verifyQueue = (site) => request(`/api/verify/queue?site=${encodeURIComponent(site)}`);
+export const verifyProgress = () => request("/api/verify/progress");
+export const verifyLabel = (body) => request("/api/verify/labels", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
+/** One channel around a target: 1.5 m either side, ticks at its position (edges top/bottom) and time (edges left/right). */
+export function verifyImageUrl(job, channel, chainageM, markNs, lineLengthM) {
+  const from = Math.max(0, chainageM - 1.5);
+  const to = Math.min(lineLengthM ?? Infinity, chainageM + 1.5);
+  // the width follows the stretch actually shown, so a target near a line's end is not stretched sideways
+  const query = new URLSearchParams({ background_removal: "mean", gain: "agc", palette: "grey", contrast: "98",
+    height: "360", width: String(Math.max(40, Math.round((360 * (to - from)) / 3))), from_m: from.toFixed(3), to_m: to.toFixed(3),
+    mark_m: chainageM.toFixed(3), mark_ns: markNs.toFixed(3) });
+  return `/api/jobs/${encodeURIComponent(job)}/channels/${encodeURIComponent(channel)}/image.png?${query}`;
+}
+

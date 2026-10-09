@@ -38,7 +38,17 @@ from evidence.quality import quality_level
 from reason.engine import GroqClient, ReasoningEngine
 from reason.prompt import build_evidence_block
 from reference import library as reference_library
-from studio import assistant_routes, auth, geo_routes, imports, interpret, render, session, velocity
+from studio import (
+    assistant_routes,
+    auth,
+    geo_routes,
+    imports,
+    interpret,
+    render,
+    session,
+    velocity,
+    verify,
+)
 from studio import candidates as candidate_store
 from studio import palette as palette_module
 from studio import picks as pick_store
@@ -55,6 +65,7 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 app.include_router(assistant_routes.router)
 app.include_router(geo_routes.router)
 app.include_router(auth.router)
+app.include_router(verify.router)
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -202,13 +213,24 @@ def _trace_span(span: tuple[str | None, str | None], spacing_m: float, n_traces:
     return slice(first, last)
 
 
-def _mark_position(image: np.ndarray, trace: float, n_traces: int) -> np.ndarray:
-    """Ticks at the top and bottom edges over one trace, leaving the radargram between them untouched."""
-    column = int((trace + 0.5) * image.shape[1] / n_traces)
-    if not 0 <= column < image.shape[1]:
-        raise ValueError("the marked position is outside the image")
-    marked, tick = image.copy(), max(3, image.shape[0] // 12)
-    marked[:tick, max(0, column - 1):column + 2] = marked[-tick:, max(0, column - 1):column + 2] = 255
+def _mark_position(image: np.ndarray, trace: float | None, row: float | None = None) -> np.ndarray:
+    """Ticks at the image edges: over one trace (top and bottom) and/or at one sample (left and right).
+
+    The radargram between the ticks is left untouched, so what is marked can still be judged.
+    """
+    marked = image.copy()
+    if trace is not None:
+        column = int(trace + 0.5)
+        if not 0 <= column < image.shape[1]:
+            raise ValueError("the marked position is outside the image")
+        tick = max(3, image.shape[0] // 12)
+        marked[:tick, max(0, column - 1):column + 2] = marked[-tick:, max(0, column - 1):column + 2] = 255
+    if row is not None:
+        line = int(row + 0.5)
+        if not 0 <= line < image.shape[0]:
+            raise ValueError("the marked time is outside the record")
+        tick = max(3, image.shape[1] // 10)
+        marked[max(0, line - 1):line + 2, :tick] = marked[max(0, line - 1):line + 2, -tick:] = 255
     return marked
 
 
@@ -219,10 +241,11 @@ def channel_image(request: Request, job_name: str, extension: str) -> Response:
     params = dict(request.query_params)
     span = params.pop("from_m", None), params.pop("to_m", None)
     mark = params.pop("mark_m", None)
+    mark_ns = params.pop("mark_ns", None)  # time from the start of the record
     processing, settings = _split_query(params)
     processed, info, _chain = _processed(job_dir, extension, processing)
     try:
-        if span == (None, None) and mark is None:
+        if span == (None, None) and mark is None and mark_ns is None:
             image = render.to_rgb(processed, settings)
         else:  # a stretch of the line and/or a ticked position, e.g. the field map's hover preview
             # Rendered whole, then cut: contrast is set by the whole line, so the stretch looks
@@ -230,8 +253,9 @@ def channel_image(request: Request, job_name: str, extension: str) -> Response:
             stretch = (slice(0, processed.shape[1]) if span == (None, None)
                        else _trace_span(span, info.trace_spacing_m, processed.shape[1]))
             image = render.to_rgb(processed, replace(settings, width_px=None, height_px=None))[:, stretch]
-            if mark is not None:
-                image = _mark_position(image, float(mark) / info.trace_spacing_m - stretch.start, image.shape[1])
+            if mark is not None or mark_ns is not None:
+                image = _mark_position(image, None if mark is None else float(mark) / info.trace_spacing_m - stretch.start,
+                                       None if mark_ns is None else float(mark_ns) / info.sample_interval_ns)
             image = render.resize(image, settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
