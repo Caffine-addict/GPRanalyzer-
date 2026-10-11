@@ -218,7 +218,7 @@ def decide_review(request: Request, job_name: str, review_id: str,
     _job(request, job_name)
     try:
         review = review_store.decide(job_name, review_id, str(body.get("status", "")),
-                                     str(body.get("reviewer", "")), str(body.get("note", ""))[:1000])
+                                     request.state.user.username, str(body.get("note", ""))[:1000])  # who is signed in, never a typed name
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"unknown review {review_id!r}") from exc
     except ValueError as exc:

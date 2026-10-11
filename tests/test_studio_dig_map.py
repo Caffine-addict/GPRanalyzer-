@@ -334,13 +334,12 @@ def test_confirm_and_report_endpoints(site: Path, monkeypatch: pytest.MonkeyPatc
     made = client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "pipe", "reviewer": "Sup", **seen})
     assert made.status_code == 200
     item_id = made.json()["dig_item_id"]
+    assert made.json()["review"]["reviewer"] == "tester"  # the signed-in account, not the typed "Sup"
     assert client.get("/api/sites/Site/dig.geojson").json()["features"][0]["properties"]["id"] == item_id
     client.post("/api/sites/Site/field_reports", json={"item_id": item_id, "outcome": "found", "reporter": "Crew"})
     (report,) = client.get("/api/sites/Site/field_reports").json()
-    assert report["item_id"] == item_id and report["outcome"] == "found"
+    assert report["item_id"] == item_id and report["outcome"] == "found" and report["reporter"] == "tester"
     assert client.post("/api/sites/Site/confirm", json={"target_id": "Site_L0#T999", "identity": "x",
                                                         "reviewer": "Sup"}).status_code == 404
-    assert client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "x",
-                                                        "reviewer": "", **seen}).status_code == 422
     again = client.post("/api/sites/Site/confirm", json={"target_id": target, "identity": "x", "reviewer": "B", **seen})
     assert again.status_code == 409 and "Interpret" in again.json()["detail"]

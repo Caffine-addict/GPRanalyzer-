@@ -56,11 +56,8 @@ export function render() {
   const counts = { proposed: 0, confirmed: 0, rejected: 0 };
   for (const r of state.reviews) counts[r.status] += 1;
 
-  const name = el("input", { type: "text", value: state.reviewer, placeholder: "Your name", title: "Required to confirm or reject a claim" });
-  name.addEventListener("change", () => actions.setReviewerName(name.value.trim()));
-
   replace(container,
-    el("div", { class: "field" }, [el("label", { text: "Reviewer" }), name]),
+    el("p", { class: "panel-note", text: state.reviewer ? `Deciding as ${state.reviewer} (signed in)` : "Signing in…" }),
     el("p", { class: "panel-note", text: `${counts.proposed} waiting · ${counts.confirmed} confirmed · ${counts.rejected} rejected` }),
     el("div", { class: "btn-row" }, [
       el("button", { class: `btn ghost${scope === "channel" ? " active" : ""}`, text: "This channel", onclick: () => setState({ reviewScope: "channel" }) }),

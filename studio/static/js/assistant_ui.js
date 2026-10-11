@@ -9,25 +9,6 @@ import * as api from "./api.js";
 import * as view from "./view.js";
 import { getState, setState } from "./state.js";
 
-const REVIEWER_KEY = "gprStudioReviewer";
-
-export function reviewerName() {
-  try {
-    return window.localStorage.getItem(REVIEWER_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function setReviewerName(name) {
-  try {
-    window.localStorage.setItem(REVIEWER_KEY, name);
-  } catch {
-    /* storage blocked: the name just is not remembered */
-  }
-  setState({ reviewer: name });
-}
-
 function patchAssistant(patch) {
   setState({ assistant: { ...getState().assistant, ...patch } });
 }
@@ -94,10 +75,10 @@ export async function briefing() {
 }
 
 export async function decide(review, status, note = "") {
-  const { job, reviewer } = getState();
+  const { job } = getState();
   if (!job) return;
   try {
-    mergeReviews([await api.decideReview(job, review.id, { status, reviewer, note })]);
+    mergeReviews([await api.decideReview(job, review.id, { status, note })]); // the server records who is signed in
   } catch (error) {
     setState({ status: `Could not record the decision: ${error.message}` });
   }

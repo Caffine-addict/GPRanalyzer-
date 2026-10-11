@@ -531,7 +531,10 @@ async function boot() {
   modal.init();
   theme.initToggle(document.getElementById("themeToggle"));
   window.addEventListener("gpr-theme", () => setState({})); // repaint the canvases in the new colours
-  api.whoAmI().then(({ username }) => { document.getElementById("accountName").textContent = username; }).catch(() => {});
+  api.whoAmI().then(({ username }) => {
+    document.getElementById("accountName").textContent = username;
+    setState({ reviewer: username }); // decisions are recorded under the signed-in account
+  }).catch(() => {});
   fieldMode.init({ openAt, view: () => ({ processing: getState().processing, display: getState().display }) });
   for (const button of document.querySelectorAll(".mode-switch .mode")) {
     button.addEventListener("click", () => setMode(button.dataset.mode));
@@ -553,7 +556,6 @@ async function boot() {
   velocityPanel.init({ onVelocityChange: setManualVelocity, onSaveTarget: () => savePick(null) });
   targets.init({ onDelete: deletePick, onSelect: selectPick });
   interpretPanel.init({ onInterpret: interpretSelected });
-  setState({ reviewer: assistantActions.reviewerName() });
   interact.install({
     onPick: (point) => savePick(point),
     onFitRegion: fitRegion,

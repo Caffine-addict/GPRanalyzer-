@@ -346,11 +346,11 @@ def test_a_supervisor_decision_is_recorded_and_exported(client: TestClient, fake
     job = _JOB
     (review,) = client.post(f"/api/jobs/{job}/channels/RAD/assistant", json={"layer": "live"}).json()["reviews"]
     url = f"/api/jobs/{job}/reviews/{review['id']}/decision"
-    assert client.post(url, json={"status": "confirmed"}).status_code == 422  # no reviewer
-    decided = client.post(url, json={"status": "confirmed", "reviewer": "S. Lead"}).json()
-    assert decided["status"] == "confirmed"
+    # a typed name is ignored: the decision is recorded under whoever is signed in
+    decided = client.post(url, json={"status": "confirmed", "reviewer": "Someone Else"}).json()
+    assert decided["status"] == "confirmed" and decided["reviewer"] == "tester"
     csv_text = client.get(f"/api/jobs/{job}/reviews.csv").text
-    assert "S. Lead" in csv_text and "confirmed" in csv_text
+    assert "tester" in csv_text and "confirmed" in csv_text and "Someone Else" not in csv_text
 
 
 @needs_data

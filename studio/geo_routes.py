@@ -276,7 +276,7 @@ def report_from_field(request: Request, site: str, payload: dict = Body(...)) ->
         raise HTTPException(status_code=404, detail="no such dig item on this site (it may have been withdrawn)")
     try:
         report = field_reports.add_report(
-            job, item_id=item_id, outcome=str(payload.get("outcome", "")), reporter=str(payload.get("reporter", "")),
+            job, item_id=item_id, outcome=str(payload.get("outcome", "")), reporter=request.state.user.username,
             note=str(payload.get("note", "")), lat=payload.get("lat"), lon=payload.get("lon"),
             accuracy_m=payload.get("accuracy_m"), depth_found_m=payload.get("depth_found_m"))
     except ValueError as exc:
@@ -308,7 +308,7 @@ def confirm_suggestion(request: Request, site: str, payload: dict = Body(...)) -
     try:
         review = dig_map.confirm_suggestion(
             _dataset_dir(request), site, str(payload.get("target_id", "")), identity=str(payload.get("identity", "")),
-            material=str(payload.get("material", "")), reviewer=str(payload.get("reviewer", "")),
+            material=str(payload.get("material", "")), reviewer=request.state.user.username,
             note=str(payload.get("note", "")), seen_trace=_number(payload.get("trace")),
             seen_time_ns=_number(payload.get("time_ns")),
             acknowledge_near_surface=payload.get("acknowledge_near_surface") is True)

@@ -32,7 +32,6 @@ let items = [];
 let here = null; // {lat, lon, accuracy, timestamp}
 let heading = null; // degrees clockwise from north, when the phone has a compass
 let selected = null;
-let reporter = "";
 let busy = false;
 let map;
 let meMarker;
@@ -40,7 +39,6 @@ let meCircle;
 let guideNode = null; // the only part of the card a GPS fix or compass change updates
 let messageNode = null;
 
-try { reporter = localStorage.getItem("gpr-field-reporter") ?? ""; } catch { /* private mode: ask each time */ }
 
 const banner = (text, kind) => el("div", { class: `banner ${kind}`, text });
 
@@ -98,20 +96,15 @@ function say(text) {
 
 async function report(outcome) {
   if (!selected || busy) return;
-  if (!reporter.trim()) {
-    say("Enter your name first — every field report says who made it.");
-    return;
-  }
   const depthText = document.getElementById("depthFound")?.value ?? "";
   busy = true;
   try {
     const fix = guidance(here, selected).usable ? here : null; // a stale or weak fix is not recorded as where we were
     await api.reportFromField(site, {
-      item_id: selected.id, outcome, reporter, note: document.getElementById("note")?.value ?? "",
+      item_id: selected.id, outcome, note: document.getElementById("note")?.value ?? "", // recorded under the signed-in account
       lat: fix?.lat ?? null, lon: fix?.lon ?? null, accuracy_m: fix?.accuracy ?? null,
       depth_found_m: outcome === "dug" && depthText ? Number(depthText) : null,
     });
-    try { localStorage.setItem("gpr-field-reporter", reporter); } catch { /* not remembered */ }
     const done = `Recorded: ${outcome.replace("_", " ")} at ${selected.id.split("#").pop()}.`;
     await load();
     buildCard();
@@ -149,7 +142,6 @@ function buildCard() {
     el("div", { class: "row" }, [el("span", { text: "What" }), el("span", { text: [item.identity, item.material].filter(Boolean).join(" · ") || "—" })]),
     el("div", { class: "row" }, [el("span", { text: "Map position" }), el("span", { text: `± ${item.horizontal_error_m.toFixed(2)} m` })]),
     item.field_outcome ? el("div", { class: "row" }, [el("span", { text: "Last report" }), el("span", { text: `${item.field_outcome} — ${item.field_report}` })]) : null,
-    el("input", { placeholder: "Your name", value: reporter, oninput: (e) => { reporter = e.target.value; } }),
     el("input", { id: "note", placeholder: "Note (optional)" }),
     el("input", { id: "depthFound", type: "number", step: "0.01", min: "0", placeholder: "Depth found in the hole (m), if dug" }),
     el("div", { class: "actions" }, [

@@ -75,7 +75,7 @@ let state = Object.freeze({
   assistant: { tab: "chat", busy: null, error: null, live: false, chat: [], replies: {} },
   reviews: [],             // every model claim on this job, proposed / confirmed / rejected
   reviewScope: "channel",  // Review panel: "channel" or "all"
-  reviewer: "",            // the supervisor's name, remembered per browser
+  reviewer: "",            // the signed-in account: who review decisions are recorded under
   highlightReviewId: null,
 
   palettes: [],

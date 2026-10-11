@@ -16,7 +16,6 @@ import { el, replace } from "./dom.js";
 const L = window.L;
 const COLOURS = { line: "#71717a", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
 const QUICK_NAMES = ["Water pipe", "Sewer", "Storm drain", "Electric cable", "Telecom duct", "Gas pipe", "Unknown utility"];
-const NAME_KEY = "gpr-supervisor";
 // echo polarity against the direct wave, read on 2+ agreeing channels (studio/site_map.py)
 const CONTRAST_TEXT = {
   denser: "denser (echo reversed: metal, water, wet ground)",
@@ -49,13 +48,6 @@ function draftOf(id) {
 /** A text input bound to one field of a draft. */
 function draftInput(draft, key, attrs) {
   return el("input", { class: "finput", ...attrs, value: draft[key], oninput: (e) => { draft[key] = e.target.value; } });
-}
-
-let person = "";
-try { person = localStorage.getItem(NAME_KEY) ?? ""; } catch { /* private window */ }
-function remember(name) {
-  person = name;
-  try { localStorage.setItem(NAME_KEY, name); } catch { /* not remembered */ }
 }
 
 const fmt = (value, digits = 2) => (value == null || Number.isNaN(value) ? "—" : Number(value).toFixed(digits));
@@ -197,7 +189,6 @@ function peek(job, channel, chainage, title) {
 
 async function confirmSuggestion(p, draft) {
   const identity = draft.identity.trim();
-  if (!person.trim()) return say("Enter your name — a confirmation says who made it.");
   if (!identity) return say("Say what it is first (pick one of the names or type your own).");
   if (p.near_surface && !draft.checked) return say("Tick that you have checked its radargram first.");
   model.busy = true;
@@ -205,7 +196,7 @@ async function confirmSuggestion(p, draft) {
   try {
     const made = await api.confirmSuggestion(model.site, {
       target_id: p.id, trace: p.trace, time_ns: p.time_ns, acknowledge_near_surface: Boolean(p.near_surface && draft.checked),
-      identity, material: draft.material, reviewer: person, note: draft.note,
+      identity, material: draft.material, note: draft.note, // recorded under the signed-in account
     });
     delete model.drafts[p.id];
     await loadSite({ keepSelection: false });
@@ -221,12 +212,11 @@ async function confirmSuggestion(p, draft) {
 }
 
 async function fileReport(outcome, draft) {
-  if (!person.trim()) return say("Enter your name — every field report says who made it.");
   model.busy = true;
   paint();
   try {
     await api.reportFromField(model.site, {
-      item_id: model.selected.props.id, outcome, reporter: person, note: draft.note,
+      item_id: model.selected.props.id, outcome, note: draft.note,
       depth_found_m: outcome === "dug" && draft.depth ? Number(draft.depth) : null,
     });
     delete model.drafts[model.selected.props.id];
@@ -253,9 +243,6 @@ function openInInterpret(job, channel, chainage) {
 const row = (label, value, cls = "") => el("div", { class: `frow ${cls}` }, [el("span", { text: label }), el("span", { class: "mono", text: value })]);
 const stat = (value, label, tone = "") => el("div", { class: `fstat ${tone}` }, [el("b", { text: String(value) }), el("span", { text: label })]);
 
-function nameInput() {
-  return el("input", { class: "finput", placeholder: "Your name", value: person, oninput: (e) => remember(e.target.value) });
-}
 
 function leftPanel() {
   const parts = [
@@ -359,7 +346,7 @@ function targetDetail(p) {
     el("div", { class: "fchips" }, QUICK_NAMES.map((name) => el("button", { class: "fchip", text: name,
       onclick: () => { draft.identity = name; identity.value = name; } }))),
     identity, draftInput(draft, "material", { placeholder: "Material (optional)" }),
-    draftInput(draft, "note", { placeholder: "Note (optional)" }), nameInput(),
+    draftInput(draft, "note", { placeholder: "Note (optional)" }),
     p.near_surface ? el("label", { class: "fcheck" }, [
       el("input", { type: "checkbox", checked: draft.checked, onchange: (e) => { draft.checked = e.target.checked; } }),
       " I've checked its radargram: this is a target, not the surface"]) : null,
@@ -387,7 +374,7 @@ function digDetail(p) {
     ...reportHistory(p.id),
     el("div", { class: "flabel", text: "Record what the crew found" }),
     draftInput(draft, "depth", { type: "number", step: "0.01", min: "0", placeholder: "Depth found in the hole (m)" }),
-    draftInput(draft, "note", { placeholder: "Note (optional)" }), nameInput(),
+    draftInput(draft, "note", { placeholder: "Note (optional)" }),
     el("div", { class: "factions" }, [
       el("button", { class: "fbtn found", disabled: model.busy, text: "Found", onclick: () => fileReport("found", draft) }),
       el("button", { class: "fbtn notfound", disabled: model.busy, text: "Not found", onclick: () => fileReport("not_found", draft) }),
