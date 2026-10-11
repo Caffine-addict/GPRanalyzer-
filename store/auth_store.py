@@ -6,10 +6,13 @@ sees a password, only its Argon2 hash, and never a session token, only its SHA-2
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -40,8 +43,13 @@ class AuthStore:
     def close(self) -> None:
         self._pool.close()
 
-    def _rows(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+    def _rows(self, sql: str, params: tuple[Any, ...], conn: Connection | None = None) -> list[dict[str, Any]]:
+        """Run on `conn` (inside its transaction) when given, else on a pooled connection of its own."""
+        if conn is not None:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return cur.fetchall() if cur.description else []
+        with self._pool.connection() as own, own.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, params)
             return cur.fetchall() if cur.description else []
 
@@ -52,9 +60,9 @@ class AuthStore:
                             (username, password_hash))
         return int(row["user_id"])
 
-    def account(self, username: str) -> Account | None:
+    def account(self, username: str, conn: Connection | None = None) -> Account | None:
         rows = self._rows("SELECT user_id, username, password_hash, disabled_at IS NOT NULL AS disabled "
-                          "FROM users WHERE lower(username) = lower(%s)", (username,))
+                          "FROM users WHERE lower(username) = lower(%s)", (username,), conn)
         return Account(**rows[0]) if rows else None
 
     def accounts(self) -> list[dict[str, Any]]:
@@ -80,20 +88,36 @@ class AuthStore:
 
     # ---- sign-in log
 
-    def record(self, event: str, username: str, user_id: int | None, ip: str | None, user_agent: str | None) -> None:
+    def record(self, event: str, username: str, user_id: int | None, ip: str | None, user_agent: str | None,
+               conn: Connection | None = None) -> None:
         self._rows("INSERT INTO login_events (event, username, user_id, ip, user_agent) VALUES (%s, %s, %s, %s, %s)",
-                   (event, username[:200], user_id, ip, (user_agent or "")[:400] or None))
+                   (event, username[:200], user_id, ip, (user_agent or "")[:400] or None), conn)
 
-    def failures_since(self, *, username: str, ip: str | None, minutes: int) -> tuple[int, int]:
-        """Failed attempts in the window: (for this username, from this address)."""
+    def failures_since(self, *, username: str, ip: str | None, minutes: int,
+                       conn: Connection | None = None) -> tuple[int, int, int]:
+        """Failed attempts in the window: (this name from this address, this name anywhere, this address)."""
         (row,) = self._rows(
             """
-            SELECT count(*) FILTER (WHERE lower(username) = lower(%s)) AS by_name,
+            SELECT count(*) FILTER (WHERE lower(username) = lower(%s) AND ip IS NOT DISTINCT FROM %s) AS by_name_ip,
+                   count(*) FILTER (WHERE lower(username) = lower(%s)) AS by_name,
                    count(*) FILTER (WHERE ip = %s) AS by_ip
             FROM login_events
             WHERE event = 'login_failed' AND at > now() - make_interval(mins => %s)
-            """, (username, ip, minutes))
-        return int(row["by_name"]), int(row["by_ip"])
+            """, (username, ip, username, ip, minutes), conn)
+        return int(row["by_name_ip"]), int(row["by_name"]), int(row["by_ip"])
+
+    @contextmanager
+    def attempt(self, username: str) -> Iterator[Connection]:
+        """Hold a per-name lock while one sign-in counts failures, checks the password and records it.
+
+        Without it, many parallel attempts all count the same past failures before any is recorded,
+        and the lock-out becomes a burst of dozens of guesses (security review 2026-10-11). The attempt's
+        own queries go through the yielded connection: borrowing more while waiting attempts hold the
+        pool would deadlock it. What it records commits, and the lock lifts, when the block ends.
+        """
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(lower(%s)))", (username,))
+            yield conn
 
     def history(self, limit: int = 50, username: str | None = None) -> list[LoginEvent]:
         rows = self._rows(

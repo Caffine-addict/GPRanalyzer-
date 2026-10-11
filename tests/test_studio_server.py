@@ -104,7 +104,8 @@ def test_the_image_can_be_cropped_to_a_stretch_of_the_line(client: TestClient, j
     assert (pixels[0] == 255).all(axis=1).sum() >= 1 and (pixels[height // 2] == np.asarray(
         Image.open(io.BytesIO(crop.content)))[height // 2]).all()  # ticks at the edge, the data untouched
     for bad in ({"from_m": 0}, {"from_m": "x", "to_m": 1}, {"from_m": 1e6, "to_m": 2e6},
-                {"from_m": 0, "to_m": 0.5, "mark_m": 9}, {"mark_m": "x"}):
+                {"from_m": 0, "to_m": 0.5, "mark_m": 9}, {"mark_m": "x"}, {"from_m": "inf", "to_m": 1},
+                {"mark_m": "nan"}, {"from_m": 0, "to_m": 0.5, "mark_ns": "inf"}):
         assert client.get(f"/api/jobs/{job}/channels/RAD/image.png", params=bad).status_code == 422
 
 

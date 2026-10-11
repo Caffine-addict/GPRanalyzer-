@@ -4,7 +4,7 @@ import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 
 const $ = (id) => document.getElementById(id);
-const state = { items: [], index: 0, busy: false, progress: null };
+const state = { items: [], index: 0, busy: false, progress: null, request: 0 };
 
 const label = (item) => `${item.job} · ${item.chainage_m.toFixed(2)} m along · ${item.time_ns.toFixed(1)} ns`;
 
@@ -19,6 +19,7 @@ function paintProgress() {
 function paint() {
   const item = state.items[state.index];
   for (const id of ["yes", "no", "unsure", "back", "skip"]) $(id).disabled = state.busy || !item;
+  $("site").disabled = state.busy;
   if (!item) {
     replace($("meta"));
     replace($("channels"), el("p", { class: "done", text: state.items.length ? "Every target on this site has a decision. Pick another site." : "No targets on this site." }));
@@ -47,11 +48,12 @@ function say(text) { $("message").textContent = text; }
 async function decide(decision) {
   const item = state.items[state.index];
   if (!item || state.busy) return;
+  const request = state.request;
   state.busy = true;
   paint();
   try {
     await api.verifyLabel({ job: item.job, trace: item.trace, time_ns: item.time_ns, decision });
-    state.items[state.index] = { ...item, decision, decided_by: "you" };
+    if (request === state.request) state.items[state.index] = { ...item, decision, decided_by: "you" };
     state.progress = await api.verifyProgress();
     paintProgress();
     say("");
@@ -69,14 +71,18 @@ function move(step) {
 }
 
 async function openSite(site) {
+  const request = ++state.request; // a slower, older answer must not replace a newer site's list
   say("Loading targets… the first time on a site takes a few seconds per line.");
   replace($("channels"));
   try {
-    state.items = (await api.verifyQueue(site)).items;
+    const items = (await api.verifyQueue(site)).items;
+    if (request !== state.request) return;
+    state.items = items;
     const next = state.items.findIndex((i) => !i.decision);
     state.index = next === -1 ? state.items.length : next;
     say("");
   } catch (error) {
+    if (request !== state.request) return;
     state.items = [];
     say(`Could not load ${site}: ${error.message}`);
   }
@@ -98,7 +104,7 @@ async function start() {
   });
   const { sites } = await api.verifySites();
   replace($("site"), ...sites.map((s) => el("option", { value: s.site, text: `${s.site} — ${s.lines} lines` })));
-  $("site").addEventListener("change", () => openSite($("site").value));
+  $("site").addEventListener("change", () => { $("site").blur(); openSite($("site").value); }); // keys go back to Y/N/U
   state.progress = await api.verifyProgress();
   paintProgress();
   if (sites.length) await openSite(sites[0].site);

@@ -502,3 +502,13 @@ def test_the_live_feed_refuses_other_websites(tmp_path: Path) -> None:
             ws.receive_json()
         with client.websocket_connect("/ws/live", headers={"origin": "http://localhost:5173"}):
             pass  # the dashboard's own origin connects
+
+
+def test_a_dns_rebinding_host_is_refused(tmp_path: Path) -> None:
+    # a rebinding page is same-origin with the API and passes CORS; its Host header gives it away
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+    with TestClient(app) as client:
+        assert client.get("/surveys", headers={"host": "attacker.example"}).status_code == 400
+        assert client.get("/surveys", headers={"host": "127.0.0.1:8000"}).status_code == 200

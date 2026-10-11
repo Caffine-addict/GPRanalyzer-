@@ -17,6 +17,7 @@ import argparse
 import getpass
 import sys
 
+import psycopg
 from dotenv import load_dotenv
 
 from store.auth_store import AuthStore
@@ -49,7 +50,7 @@ def main(argv: list[str]) -> int:
     commands.add_parser("list")
     log = commands.add_parser("log")
     log.add_argument("--user")
-    log.add_argument("--limit", type=int, default=50)
+    log.add_argument("--limit", type=lambda v: max(1, int(v)), default=50)
     args = parser.parse_args(argv)
 
     load_dotenv()
@@ -75,8 +76,8 @@ def main(argv: list[str]) -> int:
         else:
             for event in auth.store.history(args.limit, args.user):
                 print(f"{_when(event.at)}  {event.event:<12} {event.username:<24} {event.ip or '-'}")
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
+    except (ValueError, psycopg.errors.UniqueViolation) as exc:  # the second of two racing adds
+        print(exc if isinstance(exc, ValueError) else f"{args.username} already exists", file=sys.stderr)
         return 1
     finally:
         auth.store.close()

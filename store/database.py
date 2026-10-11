@@ -57,7 +57,8 @@ def migrate(pool: ConnectionPool) -> None:
 
 def open_pool(url: str, *, max_size: int = 10) -> ConnectionPool:
     """A connection pool on a migrated database. Thread-safe: callers may use it from any thread."""
-    pool = ConnectionPool(url, min_size=1, max_size=max_size, open=True)
+    # check: a connection that died with a Postgres restart is replaced before use, not handed out
+    pool = ConnectionPool(url, min_size=1, max_size=max_size, open=True, check=ConnectionPool.check_connection)
     try:
         pool.wait(timeout=10)
         migrate(pool)

@@ -17,7 +17,6 @@ import html
 import re
 import secrets
 from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
 from string import Template
 from typing import Protocol
@@ -34,9 +33,10 @@ from store.auth_store import Account, AuthStore
 SESSION_COOKIE = "gpr_session"
 SESSION_HOURS = 12  # one working day; then sign in again
 LOCK_WINDOW_MINUTES = 15
-MAX_FAILURES_PER_NAME = 5
+MAX_FAILURES_PER_NAME = 5  # from one address: the tight limit, so a stranger cannot lock the owner out
+MAX_FAILURES_PER_NAME_ANYWHERE = 50  # from all addresses together: bounds a guesser spread over many
 MAX_FAILURES_PER_ADDRESS = 20
-MIN_PASSWORD_LENGTH = 12
+MIN_PASSWORD_LENGTH = 1
 MAX_PASSWORD_LENGTH = 256
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{2,64}$")  # the database enforces the same
 PUBLIC_PATHS = frozenset({"/login"})
@@ -75,12 +75,11 @@ class Auth:
     def __init__(self, store: AuthStore) -> None:
         self.store = store
         self._hasher = PasswordHasher()
+        # Verified against when the name is unknown, so an unknown name costs the same time as a wrong
+        # password and timing does not reveal which names exist. Made now, not on first use: a lazy one
+        # would make the first unknown name pay for two hashes.
+        self._decoy_hash = self._hasher.hash(secrets.token_urlsafe(16))
 
-    @cached_property
-    def _decoy_hash(self) -> str:
-        # Verified against when the name is unknown, so an unknown name costs the same time as a
-        # wrong password and response timing does not reveal which names exist.
-        return self._hasher.hash(secrets.token_urlsafe(16))
 
     # ---- accounts (the python -m studio.users command)
 
@@ -114,16 +113,24 @@ class Auth:
 
     def sign_in(self, username: str, password: str, ip: str | None, user_agent: str | None) -> str:
         """A new session token, or BadCredentialsError / LockedOutError. Every outcome is logged."""
-        username = username.strip()[:200]
-        by_name, by_address = self.store.failures_since(username=username, ip=ip, minutes=LOCK_WINDOW_MINUTES)
-        account = self.store.account(username) if username else None
-        if by_name >= MAX_FAILURES_PER_NAME or by_address >= MAX_FAILURES_PER_ADDRESS:
-            self.store.record("locked_out", username, account.user_id if account else None, ip, user_agent)
-            raise LockedOutError
-        if not self._password_matches(account.password_hash if account else None, password) \
-                or account is None or account.disabled:
-            self.store.record("login_failed", username, account.user_id if account else None, ip, user_agent)
-            raise BadCredentialsError
+        username = username.replace("\x00", "").strip()[:200]  # Postgres text cannot hold NUL
+        # Count, check and record as one step per name. The outcome is raised only after the block:
+        # raising inside it would roll back the very record of the failure.
+        refused: type[Exception] | None = None
+        with self.store.attempt(username) as conn:
+            mine, anywhere, by_address = self.store.failures_since(
+                username=username, ip=ip, minutes=LOCK_WINDOW_MINUTES, conn=conn)
+            account = self.store.account(username, conn) if username else None
+            if (mine >= MAX_FAILURES_PER_NAME or anywhere >= MAX_FAILURES_PER_NAME_ANYWHERE
+                    or by_address >= MAX_FAILURES_PER_ADDRESS):
+                self.store.record("locked_out", username, account.user_id if account else None, ip, user_agent, conn)
+                refused = LockedOutError
+            elif not self._password_matches(account.password_hash if account else None, password) \
+                    or account is None or account.disabled:
+                self.store.record("login_failed", username, account.user_id if account else None, ip, user_agent, conn)
+                refused = BadCredentialsError
+        if refused is not None or account is None:
+            raise refused or BadCredentialsError
         if self._hasher.check_needs_rehash(account.password_hash):
             self.store.set_password_hash(account.user_id, self._hasher.hash(password), changed=False)
         token = secrets.token_urlsafe(32)
@@ -201,7 +208,9 @@ async def login(request: Request, username: str = Form(""), password: str = Form
         return _page("Wrong username or password.", next_path=_safe_next(next), username=username, status=401)
     response = RedirectResponse(_safe_next(next), status_code=303)
     response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, path="/", httponly=True,
-                        samesite="lax", secure=request.url.hostname not in _LOOPBACK)
+                        # HTTPS (uvicorn applies the proxy's X-Forwarded-Proto from 127.0.0.1), or any
+                        # host but this machine: that only arrives through a proxy
+                        samesite="lax", secure=request.url.scheme == "https" or request.url.hostname not in _LOOPBACK)
     return response
 
 

@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import parsers.ascii_xta
 import parsers.dzt
@@ -141,6 +142,9 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
     )
 
     trusted = frozenset(cors_origins)
+    # A DNS-rebinding page is same-origin with the API and passes CORS; its Host header is still its
+    # own domain. "testserver" is Starlette's test client, which no DNS name can claim.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
 
     @app.middleware("http")
     async def refuse_writes_from_other_sites(request: Request, call_next):  # type: ignore[no-untyped-def]

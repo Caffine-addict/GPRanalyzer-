@@ -175,3 +175,42 @@ def test_the_users_command_creates_and_lists_accounts(db_url: str, monkeypatch: 
     assert users.main(["list"]) == 0
     out = capsys.readouterr().out
     assert "created sup1" in out and "sup1" in out.splitlines()[-1] and "never" in out
+
+
+# ---------------------------------------------------------------- review fixes (2026-10-11)
+
+def test_parallel_attempts_cannot_race_past_the_lock_out(auth: Auth) -> None:
+    # without the per-name lock, every parallel attempt counted 0 past failures and was let through
+    from concurrent.futures import ThreadPoolExecutor
+
+    def guess(_: int) -> str:
+        try:
+            auth.sign_in("alice", "wrong password!", "203.0.113.9", "attacker")
+        except auth_module.LockedOutError:
+            return "locked"
+        except auth_module.BadCredentialsError:
+            return "failed"
+        return "signed in"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(guess, range(20)))
+    assert outcomes.count("failed") == auth_module.MAX_FAILURES_PER_NAME and outcomes.count("locked") == 15
+
+
+def test_a_stranger_cannot_lock_the_owner_out_from_elsewhere(auth: Auth) -> None:
+    for _ in range(auth_module.MAX_FAILURES_PER_NAME):
+        with pytest.raises(auth_module.BadCredentialsError):
+            auth.sign_in("alice", "wrong password!", "203.0.113.9", "attacker")
+    with pytest.raises(auth_module.LockedOutError):
+        auth.sign_in("alice", PASSWORD, "203.0.113.9", "attacker")  # that address is locked for this name
+    assert auth.sign_in("alice", PASSWORD, "198.51.100.7", "owner")  # the owner's own address is not
+
+
+def test_a_nul_byte_in_the_name_is_a_wrong_sign_in_not_a_crash(client: TestClient) -> None:
+    assert _sign_in(client, username="ali\x00ce", password="nope").status_code == 401
+
+
+def test_pages_cannot_be_framed_by_other_sites(client: TestClient) -> None:
+    headers = client.get("/login").headers
+    assert headers["x-frame-options"] == "DENY" and "frame-ancestors 'none'" in headers["content-security-policy"]
+    assert headers["x-content-type-options"] == "nosniff"

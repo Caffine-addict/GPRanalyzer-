@@ -1,7 +1,7 @@
 # Postgres for GPR Studio: logins and the live pipeline's findings.
 #   docker compose up -d        (reads POSTGRES_PASSWORD from .env)
 # Bound to 127.0.0.1 only: the Studio on this machine is the one client. Data lives in the
-# named volume `gpr-pgdata`; back it up with deploy/postgres/backup.sh.
+# named volume `gpr-pgdata`; back it up with deploy/backup.sh.
 services:
   postgres:
     image: postgres:17-alpine

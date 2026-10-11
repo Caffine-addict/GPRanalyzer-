@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -83,6 +84,18 @@ async def revalidate_the_app(request: Request, call_next):  # type: ignore[no-un
     response = await call_next(request)
     if request.url.path in ("/", "/field") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """No other site may frame the Studio (clickjacking the sign-in or a decision button), and a
+    browser must not second-guess a served file's type. HSTS belongs at the HTTPS proxy."""
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
     return response
 
 
@@ -201,10 +214,18 @@ def job_detail(request: Request, job_name: str) -> dict:
     }
 
 
+def _finite(value: str | None) -> float:
+    """A query number that is a real number: "inf" and "nan" parse as floats but mark nothing."""
+    number = float(value)  # type: ignore[arg-type]
+    if not math.isfinite(number):
+        raise ValueError(f"not a finite number: {value}")
+    return number
+
+
 def _trace_span(span: tuple[str | None, str | None], spacing_m: float, n_traces: int) -> slice:
     """Traces from `from_m` to `to_m` along the line, clipped to the line; both are required."""
     try:
-        start, stop = (float(v) for v in span)  # type: ignore[arg-type]
+        start, stop = (_finite(v) for v in span)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="from_m and to_m must both be numbers (metres)") from exc
     first, last = max(0, int(start / spacing_m)), min(n_traces, int(stop / spacing_m) + 1)
@@ -254,8 +275,8 @@ def channel_image(request: Request, job_name: str, extension: str) -> Response:
                        else _trace_span(span, info.trace_spacing_m, processed.shape[1]))
             image = render.to_rgb(processed, replace(settings, width_px=None, height_px=None))[:, stretch]
             if mark is not None or mark_ns is not None:
-                image = _mark_position(image, None if mark is None else float(mark) / info.trace_spacing_m - stretch.start,
-                                       None if mark_ns is None else float(mark_ns) / info.sample_interval_ns)
+                image = _mark_position(image, None if mark is None else _finite(mark) / info.trace_spacing_m - stretch.start,
+                                       None if mark_ns is None else _finite(mark_ns) / info.sample_interval_ns)
             image = render.resize(image, settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
