@@ -23,7 +23,8 @@ teammates) is being chosen; Tailscale was tried on 2026-10-08 and removed.
 | Accounts and last sign-in | `python -m studio.users list` |
 | New password (signs them out everywhere) | `python -m studio.users passwd NAME` |
 | Block someone now | `python -m studio.users disable NAME` |
-| Back up the database | `deploy/postgres/backup.sh` (writes `backups/`, gitignored) |
+| Back up now | `deploy/backup.sh`: database + annotations into `backups/` (gitignored); `BACKUP_DIR=/Volumes/<drive>/GPR` for another disk |
+| Nightly backups (02:30, newest 14 kept) | `deploy/macos/install_backup_service.sh`; log `~/Library/Logs/GPRStudio/backup.log` |
 | Restart the Studio after an update | `launchctl kickstart -k gui/$(id -u)/com.gprstudio.studio` |
 
 ## What protects what
@@ -32,5 +33,6 @@ teammates) is being chosen; Tailscale was tried on 2026-10-08 and removed.
   HTTPS, 12 hours; the database keeps only its SHA-256.
 - Five failed attempts for a name (or twenty from one address) in 15 minutes lock sign-in.
 - Writes from other websites are refused (Origin / Sec-Fetch-Site checks).
-- Not covered: `Dataset/` and `annotations/` are files on this PC; back them up with the PC.
+- Backups cover the database and `annotations/` nightly. `Dataset/` (the radar files) is source data:
+  keep the original deliveries safe separately. A backup on the same disk does not survive the disk.
 - The live-pipeline API (`api/server.py`) has no sign-in: keep it on 127.0.0.1, never expose it.
