@@ -128,3 +128,36 @@ def test_a_line_trusts_its_header_only_when_every_channel_agrees(monkeypatch: py
     monkeypatch.setattr(session, "available_channels", lambda _job: channels)
     monkeypatch.setattr(session, "load_frame", lambda _job, ext: frames[ext])
     assert session.line_dielectric(Path("x")) == expected
+
+
+# ---------------------------------------------------------------- contrast with the soil (2026-10-11)
+
+@pytest.mark.parametrize(("votes", "expected"), [
+    ((True, True, None), "lighter"), ((False, False, False), "denser"),
+    ((True, None, None), "unreadable"),  # one channel cannot name a material
+    ((True, False, True), "unreadable"),  # any disagreement: not read
+    ((None, None, None), "unreadable"),
+])
+def test_contrast_needs_two_agreeing_channels_and_no_dissent(votes: tuple, expected: str) -> None:
+    assert site_map.contrast_from_votes(votes) == expected
+
+
+def test_readings_join_contrast_and_continuity_and_say_when_runs_are_weak() -> None:
+    assert "air-filled pipe or duct" in site_map.reading("lighter", on_run=True, run_confirmed=True)
+    assert "possible void" in site_map.reading("lighter", on_run=False, run_confirmed=True)
+    assert "metal or water-filled" in site_map.reading("denser", on_run=True, run_confirmed=True)
+    assert "not above chance" in site_map.reading("denser", on_run=True, run_confirmed=False)
+    assert site_map.reading("unreadable", on_run=True, run_confirmed=True) is None
+
+
+def test_every_target_on_the_map_carries_its_contrast_and_reading(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    dataset = tmp_path / "Lines"
+    dataset.mkdir()
+    for k in range(3):
+        imports.import_line(dataset, f"Site_L{k}", _line_with_gps(east_m=1.0 * k, pipe_north_m=4.0))
+    targets = [f["properties"] for f in site_map.site_geojson(dataset, "Site")["features"]
+               if f["properties"]["kind"] == "target"]
+    assert targets and all("contrast" in t and "reading" in t for t in targets)
+    # these test lines have one channel, so nothing can be read: the honest answer, not a guess
+    assert {t["contrast"] for t in targets} == {"unreadable"} and {t["reading"] for t in targets} == {None}

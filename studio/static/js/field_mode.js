@@ -17,6 +17,12 @@ const L = window.L;
 const COLOURS = { line: "#71717a", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
 const QUICK_NAMES = ["Water pipe", "Sewer", "Storm drain", "Electric cable", "Telecom duct", "Gas pipe", "Unknown utility"];
 const NAME_KEY = "gpr-supervisor";
+// echo polarity against the direct wave, read on 2+ agreeing channels (studio/site_map.py)
+const CONTRAST_TEXT = {
+  denser: "denser (echo reversed: metal, water, wet ground)",
+  lighter: "lighter (echo kept: air, as in a void or empty duct)",
+  unreadable: "not readable on two channels",
+};
 
 const dom = {};
 let handlers = {};
@@ -344,6 +350,8 @@ function targetDetail(p) {
     row("Depth", `${fmt(p.depth_m)} ± ${fmt(p.depth_error_m)} m`), row("Map position", `± ${fmt(p.horizontal_error_m)} m`),
     row("Seen on", `${p.channels.join(", ")} (${p.corroboration} channel${p.corroboration === 1 ? "" : "s"})`),
     row("Depth from", p.depth_basis),
+    row("Contrast with soil", CONTRAST_TEXT[p.contrast] ?? "—"),
+    p.reading ? el("p", { class: "fnote", text: `Reading: ${p.reading}. From echo polarity and continuity, not an identity: records and digging decide what it is.` }) : null,
     el("button", { class: "fbtn", text: "Open its radargram in Interpret",
       onclick: () => openInInterpret(p.job, p.channels[0], p.chainage_m) }),
     el("div", { class: "flabel", text: "Confirm as a dig item" }),
@@ -392,6 +400,7 @@ function runDetail(p) {
   return [
     el("div", { class: "fhead" }, [el("h2", { text: `Possible run ${shortId(p.id)}` }), el("span", { class: "fpill suggested", text: "suggested" })]),
     row("Crosses", `${p.lines} lines`), row("Depth", `${fmt(p.depth_m)} m (${fmt(p.depth_range_m[0])}–${fmt(p.depth_range_m[1])})`),
+    row("Contrast with soil", CONTRAST_TEXT[p.contrast] ?? "—"),
     el("p", { class: "fnote", text: `Evidence: ${p.evidence}. A run is targets that line up from line to line at a steady depth; it is not a confirmed pipe.` }),
   ];
 }

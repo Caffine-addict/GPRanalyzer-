@@ -32,6 +32,7 @@ from typing import Any
 import numpy as np
 
 from detect.channel_fusion import ChannelPicks, fuse, time_zero_ns
+from detect.measure import echo_matches_direct_wave_polarity
 from detect.migration_picker import NEAR_SURFACE_NS, pick_targets
 from studio import gps_georef, session
 from studio import picks as pick_store
@@ -85,6 +86,72 @@ class SiteTarget:
     origin: str  # "suggested" (detector) or "interpreted" (a person's pick)
     depth_basis: str
     time_ns: float | None = None  # two-way time from time zero: what ties a suggestion back to its box
+    contrast: str = "unreadable"  # "denser" / "lighter" than the soil, from echo polarity on 2+ channels
+
+
+# Echo polarity at a target's apex against the direct wave (detect/measure.py): a reflection off a
+# rise in permittivity or metal reverses the pulse, one off a drop (into air) keeps it. Checked on
+# the 24 gprMax scenes with known pipes: right on 18 of 21 readable (metal 4/6, water-filled plastic
+# 5/6, air-filled plastic 9/9), 7 unreadable. Read over a few traces at the apex, where the
+# hyperbola is flat, and only trusted when two channels agree and none disagrees.
+POLARITY_HALF_TRACES = 3
+POLARITY_WINDOW_NS = (1.0, 1.5)  # before and after the apex time
+MIN_AGREEING_CHANNELS = 2
+# Shallower than this, the window still holds the direct wave's tail, whose polarity is by definition
+# "kept": on Set 1, targets at 0.06-0.10 m read as voids. 1.0 ns before the apex must clear time zero
+# plus the near-surface band (NEAR_SURFACE_NS).
+MIN_POLARITY_TIME_NS = 2.5
+READINGS = {
+    ("lighter", True): "lighter than the soil and on a run across lines: an air-filled pipe or duct",
+    ("lighter", False): "lighter than the soil and isolated: a possible void (check records before calling it one)",
+    ("denser", True): "denser than the soil and on a run across lines: a metal or water-filled pipe",
+    ("denser", False): "denser than the soil and isolated: a stone, fitting or short object",
+}
+
+
+def contrast_from_votes(votes: Sequence[bool | None]) -> str:
+    """'lighter' (echo keeps the direct wave's polarity), 'denser' (reversed) or 'unreadable'.
+
+    A channel's vote is None when its echo is too incoherent to read. Two or more readable channels
+    must agree and none may disagree: one channel alone is not enough to name a material.
+    """
+    readable = [v for v in votes if v is not None]
+    if len(readable) < MIN_AGREEING_CHANNELS or len(set(readable)) != 1:
+        return "unreadable"
+    return "lighter" if readable[0] else "denser"
+
+
+def reading(contrast: str, on_run: bool, run_confirmed: bool) -> str | None:
+    """What the contrast and continuity together suggest, or None when the contrast is unreadable."""
+    text = READINGS.get((contrast, on_run))
+    if text and on_run and not run_confirmed:
+        text += " (the runs on this site are not above chance)"
+    return text
+
+
+@lru_cache(maxsize=256)
+def _contrasts(job_dir_str: str, _mtime_ns: int) -> tuple[str, ...]:
+    """The contrast of each of the line's merged targets, in _detected's order."""
+    job_dir = Path(job_dir_str)
+    channels = []
+    for info in session.available_channels(job_dir):
+        traces = session.raw_traces(session.load_frame(job_dir, info.extension))
+        channels.append((traces, info.sample_interval_ns, time_zero_ns(traces, info.sample_interval_ns)))
+    found = []
+    for trace, time_ns, _channels, _header in _detected(job_dir_str, _mtime_ns):
+        if time_ns < MIN_POLARITY_TIME_NS:
+            found.append("unreadable")
+            continue
+        votes = []
+        for traces, dt, zero in channels:
+            apex = round((time_ns + zero) / dt)
+            t = round(trace)
+            rows = slice(max(0, apex - round(POLARITY_WINDOW_NS[0] / dt)), apex + round(POLARITY_WINDOW_NS[1] / dt))
+            cols = slice(max(0, t - POLARITY_HALF_TRACES), t + POLARITY_HALF_TRACES + 1)
+            votes.append(echo_matches_direct_wave_polarity(traces, rows, cols, dt)
+                         if 0 < apex < traces.shape[1] and 0 <= t < traces.shape[0] else None)
+        found.append(contrast_from_votes(votes))
+    return tuple(found)
 
 
 def site_of(job: str) -> str:
@@ -185,6 +252,7 @@ def line_targets(job: str, job_dir: Path, line: PlacedLine, antenna_offset_uncer
     mtime = max(p.stat().st_mtime_ns for p in job_dir.iterdir())
     edge = LINE_EDGE_M / line.trace_spacing_m
     found = []
+    contrasts = _contrasts(str(job_dir), mtime)
     for k, (trace, time_ns, channels, header) in enumerate(_detected(str(job_dir), mtime)):
         if time_ns <= 0 or trace < edge or trace > n_traces - 1 - edge:
             continue
@@ -193,7 +261,8 @@ def line_targets(job: str, job_dir: Path, line: PlacedLine, antenna_offset_uncer
         lat, lon = line.at(trace)
         found.append(SiteTarget(f"{job}#T{k + 1}", job, trace, lat, lon, depth,
                                 DEPTH_RELATIVE_ERROR * depth + DEPTH_FLOOR_ERROR_M, horizontal, channels,
-                                "suggested", f"{basis}: {dielectric:.1f}" if not header else basis, time_ns))
+                                "suggested", f"{basis}: {dielectric:.1f}" if not header else basis, time_ns,
+                                contrasts[k]))
     for pick in pick_store.load_picks(job):
         lat, lon = line.at(pick.trace)
         relative = 0.05 if pick.velocity_source == "fitted" else DEPTH_RELATIVE_ERROR
@@ -306,6 +375,11 @@ def _run_evidence(placed: Sequence[PlacedLine], lengths: dict[str, int], targets
     return {"runs": found, "chance_mean": round(float(np.mean(counts)), 2), "p_chance": round(p, 3), "verdict": verdict}
 
 
+def _run_contrast(run: Sequence[SiteTarget]) -> str:
+    """A run's contrast: what at least two of its targets read, with none reading the other way."""
+    return contrast_from_votes([None if t.contrast == "unreadable" else t.contrast == "lighter" for t in run])
+
+
 def _mean_direction(lines: Sequence[PlacedLine]) -> np.ndarray:
     ref = np.array(lines[0].direction)
     mean = np.mean([d if d @ ref >= 0 else -d for d in (np.array(line.direction) for line in lines)], axis=0)
@@ -380,6 +454,14 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
                                             "time_ns": None if t.time_ns is None else round(t.time_ns, 2)}})
     runs = _runs(placed, targets)
     evidence = _run_evidence(placed, lengths, targets, len(runs))
+    confirmed = evidence["verdict"].startswith("runs beat chance")
+    on_run = {t.id for run in runs for t in run}
+    contrast_of = {t.id: t.contrast for t in targets}
+    for feature in features:
+        props = feature["properties"]
+        if props["kind"] == "target":
+            props["contrast"] = contrast_of[props["id"]]
+            props["reading"] = reading(props["contrast"], props["id"] in on_run, confirmed)
     for k, run in enumerate(runs):
         depths = [t.depth_m for t in run]
         features.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": [_point(t.lat, t.lon) for t in run]},
@@ -387,6 +469,7 @@ def _site_geojson(dataset_dir_str: str, site: str, antenna_offset_uncertainty_m:
                                         "depth_m": round(float(np.median(depths)), 2),
                                         "depth_range_m": [round(min(depths), 2), round(max(depths), 2)],
                                         "targets": [t.id for t in run], "status": "suggested",
+                                        "contrast": _run_contrast(run),
                                         "evidence": evidence["verdict"]}})
     return {"type": "FeatureCollection", "features": features,
             "metadata": {"site": site, "lines_placed": len({f["properties"]["job"] for f in features

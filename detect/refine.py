@@ -142,7 +142,11 @@ def _area(
     if matches is None:
         return DISTURBED, "top echo too weak to read its polarity"
     if matches:
-        return CAVITIES, "top echo has the direct wave's polarity: a drop in permittivity, as into air (rule not yet validated)"
+        # A drop in permittivity reads the same for an air void and an empty plastic pipe or duct (research
+        # 2026-10-09): on one line they cannot be told apart. Continuity across neighbouring lines does
+        # that (studio/site_map.py: a duct runs straight across many lines, a void does not).
+        return CAVITIES, ("top echo has the direct wave's polarity: lighter than the soil, as air: a void, or an "
+                          "empty plastic pipe or duct if it continues across neighbouring lines (rule not yet validated)")
     return DISTURBED, "top echo polarity reversed from the direct wave: not an air-filled gap"
 
 

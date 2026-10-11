@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterator
 
 import pytest
@@ -31,6 +30,8 @@ class _SignedIn:
 
 @pytest.fixture(autouse=True)
 def _studio_signed_in(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    server = sys.modules.get("studio.server")
-    if server is not None and request.node.get_closest_marker("real_auth") is None:
+    if request.node.get_closest_marker("real_auth") is None:
+        # imported here, not looked up: a test that imports the app lazily must still be signed in
+        from studio import server
+
         monkeypatch.setattr(server.app.state, "auth", _SignedIn(), raising=False)
