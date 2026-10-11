@@ -26,6 +26,7 @@ teammates) is being chosen; Tailscale was tried on 2026-10-08 and removed.
 | Back up now | `deploy/backup.sh`: database + annotations into `backups/` (gitignored); `BACKUP_DIR=/Volumes/<drive>/GPR` for another disk |
 | Nightly backups (02:30, newest 14 kept) | `deploy/macos/install_backup_service.sh`; log `~/Library/Logs/GPRStudio/backup.log` |
 | Restart the Studio after an update | `launchctl kickstart -k gui/$(id -u)/com.gprstudio.studio` |
+| Live-pipeline API (8000) and dashboard (5173) as services | `deploy/macos/install_pipeline_services.sh` (rebuild the dashboard first: `cd dashboard && npm run build`) |
 
 ## What protects what
 

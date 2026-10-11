@@ -476,3 +476,29 @@ def test_starting_on_a_path_that_cannot_be_read_is_a_400_with_the_reason(tmp_pat
         assert response.status_code == 400
         assert "not found" in response.json()["detail"]
         assert client.get("/surveys").json() == []  # nothing half-started
+
+
+def test_a_write_from_another_website_is_refused(tmp_path: Path) -> None:
+    # a plain form POST needs no CORS preflight: without this check any page could start a survey
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+    with TestClient(app) as client:
+        refused = client.post("/surveys/s1/start", headers={"origin": "https://evil.example"})
+        assert refused.status_code == 403
+        allowed = client.post("/surveys/s1/start", headers={"origin": "http://localhost:5173"})
+        assert allowed.status_code != 403
+
+
+def test_the_live_feed_refuses_other_websites(tmp_path: Path) -> None:
+    # WebSockets are outside CORS: any page could otherwise read every finding as it arrives
+    from starlette.websockets import WebSocketDisconnect as Disconnect
+
+    frames_dir = tmp_path / "frames"
+    _write_fixture_frames(frames_dir, 1)
+    app = create_app(_write_test_config(tmp_path, frames_dir))
+    with TestClient(app) as client:
+        with pytest.raises(Disconnect), client.websocket_connect("/ws/live", headers={"origin": "https://evil.example"}) as ws:
+            ws.receive_json()
+        with client.websocket_connect("/ws/live", headers={"origin": "http://localhost:5173"}):
+            pass  # the dashboard's own origin connects

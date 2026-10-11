@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
@@ -140,6 +140,18 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
         allow_headers=["*"],
     )
 
+    trusted = frozenset(cors_origins)
+
+    @app.middleware("http")
+    async def refuse_writes_from_other_sites(request: Request, call_next):  # type: ignore[no-untyped-def]
+        """CORS stops another site *reading* a reply, not *sending* a plain form POST: without this,
+        any page the operator has open could start or stop surveys. Browser writes must come from a
+        trusted origin; requests with no Origin (curl, scripts, the test client) are not from a page."""
+        origin = request.headers.get("origin")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and origin is not None and origin not in trusted:
+            return JSONResponse({"detail": "refused: request did not come from the dashboard"}, status_code=403)
+        return await call_next(request)
+
     # All four GET handlers are deliberately `async def`, not plain `def`:
     # Starlette runs plain `def` route handlers in a worker thread pool,
     # SurveyManager/Orchestrator do all their store writes synchronously on
@@ -243,6 +255,11 @@ def create_app(config_path: Path = _DEFAULT_CONFIG_PATH) -> FastAPI:
 
     @app.websocket("/ws/live")
     async def websocket_live(websocket: WebSocket) -> None:
+        # WebSockets are outside CORS: any page could otherwise open the live feed and read it.
+        origin = websocket.headers.get("origin")
+        if origin is not None and origin not in trusted:
+            await websocket.close(code=1008)  # policy violation
+            return
         connections: ConnectionManager = app.state.connections
         await connections.connect(websocket)
         try:
