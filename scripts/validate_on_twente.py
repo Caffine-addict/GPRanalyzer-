@@ -351,6 +351,7 @@ def summarise(surveys: list[dict]) -> dict[str, object]:
                if (e := stacked_permittivity([c for line in s["lines"] for c in line["curves"]])) is not None]
     result["velocity_hyperbola_fit"] = _velocity_scores(fits, guess) if fits else None
     result["velocity_semblance_stacked"] = _velocity_scores(stacked, guess) if stacked else None
+    result["semblance_pairs"] = [[round(r, 2), round(m, 2)] for r, m in stacked]  # (reported, measured), for bias checks
     return result
 
 
