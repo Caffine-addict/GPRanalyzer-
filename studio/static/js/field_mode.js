@@ -14,6 +14,8 @@ import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 
 const L = window.L;
+const OSM_MAX_ZOOM = 20; // one level past OpenStreetMap's sharpest tiles
+const SURVEY_MAX_ZOOM = 22;
 const COLOURS = { line: "#71717a", target: "#f59e0b", run: "#3b82f6", confirmed: "#22c55e", interpreted: "#a78bfa", select: "#ffffff" };
 const QUICK_NAMES = ["Water pipe", "Sewer", "Storm drain", "Electric cable", "Telecom duct", "Gas pipe", "Unknown utility"];
 // echo polarity against the direct wave, read on 2+ agreeing channels (studio/site_map.py)
@@ -96,10 +98,10 @@ function toSelection(feature) {
 
 function ensureMap() {
   if (map || !L) return;
-  map = L.map(dom.map, { zoomControl: true, preferCanvas: true }).setView([12.97, 77.6], 17);
+  map = L.map(dom.map, { zoomControl: true, preferCanvas: true, maxZoom: SURVEY_MAX_ZOOM }).setView([12.97, 77.6], 17);
   L.control.scale({ metric: true, imperial: false }).addTo(map);
   groups.osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 22, maxNativeZoom: 19, attribution: "© OpenStreetMap contributors",
+    maxZoom: OSM_MAX_ZOOM, maxNativeZoom: 19, attribution: "© OpenStreetMap contributors",
   });
   map.on("click", () => select(null));
 }
@@ -155,7 +157,7 @@ function drawMap(fit) {
   if (fit) {
     map.invalidateSize(); // the panel may have changed size since the map last measured itself
     const bounds = groups.lines.getLayers().length ? groups.lines.getBounds() : null;
-    if (bounds?.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 21 });
+    if (bounds?.isValid()) map.fitBounds(bounds, { padding: [30, 30] }); // within the map's own zoom cap
   }
   if (model.selected) select({ geometry: { type: "Point", coordinates: [model.selected.latlng[1], model.selected.latlng[0]] }, properties: model.selected.props });
 }
@@ -171,6 +173,9 @@ function applyLayers() {
   }
   if (model.layers.osm && !map.hasLayer(groups.osm)) groups.osm.addTo(map).bringToBack();
   if (!model.layers.osm && map.hasLayer(groups.osm)) map.removeLayer(groups.osm);
+  // OpenStreetMap draws tiles to level 19; past 20 they are blown up into blurry giant labels.
+  // The survey lines alone stay sharp at any zoom, so the cap applies only while the map is shown.
+  map.setMaxZoom(model.layers.osm ? OSM_MAX_ZOOM : SURVEY_MAX_ZOOM);
 }
 
 /** The hover preview: the radargram around a point, or a plain note when the line has none to show. */
