@@ -69,3 +69,21 @@ training sites, step 2) is required before any checkpoint can be chosen honestly
   roughly ±17 points. Telling 74% from 85% needs about 70-135 paired verified targets.
 - Background stretches still hold real arches weaker than the picker's strength 5: label noise.
 - Analytic hyperbolas are geometry plus the radar's pulse, not full-wave physics.
+
+## Result of step 1b (2026-10-14): real echoes, three channels, picker labels
+
+`simulate/real_stack.py`: RAD/RA1/RA2 aligned at time zero and stacked as colour layers; labels are
+merged picker targets seen on 2+ channels below 2.5 ns; 120 real echoes cut from them and pasted
+elsewhere. 762 training images (Job, Set1), checkpoint chosen on Set2 (best epoch 7 of 22, val
+mAP50 0.21). Scored once on the 23 held-out tags (`eval_apex_on_tags.py --stack`, 15 per line):
+
+| Model | Tags found | Chance |
+|---|---|---|
+| Real-echo, 3-channel model | **11/23 (48%)** | 19% |
+| Composite model (step 1) | 8/23 (35%) | 9% |
+| Picker, RAD only | 10/23 (43%) | 14% |
+| Picker, 3 channels merged (installed) | **17/23 (74%)** | 25% |
+
+Real echoes beat analytic ones, but trained on the picker's own labels the model can at best copy the
+picker, and it stays well below the merged picker. Not installed. This is the ceiling of training
+without people: verified labels (`/verify`) are the next step.
