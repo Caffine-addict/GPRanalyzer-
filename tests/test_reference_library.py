@@ -9,6 +9,11 @@ import pytest
 
 from reference import library
 
+# The crops come from the company's deliverable sheets, which never leave the dev machine.
+pytestmark = pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[1] / "reference" / "hyperbolas" / "manifest.json").exists(),
+    reason="reference crops not present (company deliverable sheets)")
+
 
 @pytest.fixture(autouse=True)
 def _clear_caches() -> None:

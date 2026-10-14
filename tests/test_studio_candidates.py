@@ -96,8 +96,15 @@ def test_entrypoint_refuses_a_missing_dataset_directory(capsys: pytest.CaptureFi
 def test_entrypoint_points_the_app_at_the_requested_dataset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from tests.pg import fresh_url
+
     served: dict[str, object] = {}
     monkeypatch.setattr(entrypoint.uvicorn, "run", lambda app, **kwargs: served.update(kwargs))
+    # the Studio will not start without its login database (studio/auth.py): give it a throwaway one,
+    # and put back whatever main() sets on the shared app when the test ends
+    monkeypatch.setenv("DATABASE_URL", fresh_url())
+    for name in ("auth", "labels", "dataset_dir"):
+        monkeypatch.setattr(entrypoint.app.state, name, getattr(entrypoint.app.state, name, None), raising=False)
 
     assert entrypoint.main(["studio", str(tmp_path)]) == 0
     assert entrypoint.app.state.dataset_dir == tmp_path

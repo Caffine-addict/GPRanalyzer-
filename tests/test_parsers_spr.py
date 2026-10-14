@@ -256,6 +256,8 @@ def test_parse_spr_rejects_non_uniform_record_spacing(tmp_path: Path) -> None:
 
 _DATASET = Path("Dataset/DSU_GPR_Files")
 
+
+@pytest.mark.skipif(not _DATASET.exists(), reason="company SPR dataset not present (never leaves the dev machine)")
 def test_only_real_vendor_fields_survive_the_header_scan() -> None:
     """The header block is found by scanning, so the scan must reject what it mis-reads.
 

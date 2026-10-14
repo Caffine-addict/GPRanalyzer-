@@ -88,6 +88,21 @@ def _is_noise(path: Path, root: Path) -> bool:
     return "__MACOSX" in parts or path.name.startswith("._") or path.name == ".DS_Store"
 
 
+def _find_bsdtar() -> str | None:
+    """bsdtar (libarchive), which reads zip, rar and 7z as well as tar.
+
+    `tar` counts only when it is bsdtar, as on macOS and Windows 10+: GNU tar, Linux's usual one,
+    cannot open a zip and would fail with a misleading "does not look like a tar archive".
+    """
+    if found := shutil.which("bsdtar"):
+        return found
+    tar = shutil.which("tar")
+    if tar is None:
+        return None
+    version = subprocess.run([tar, "--version"], capture_output=True, text=True, check=False).stdout
+    return tar if "bsdtar" in version else None
+
+
 def _extract(archive: Path, extract_root: Path) -> Path:
     """Unpack `archive` once into a folder keyed on its identity and version; reuse it after."""
     stat = archive.stat()
@@ -95,7 +110,7 @@ def _extract(archive: Path, extract_root: Path) -> Path:
     dest = extract_root / f"{archive.stem}-{key}"
     if dest.exists():
         return dest
-    bsdtar = shutil.which("bsdtar") or shutil.which("tar")
+    bsdtar = _find_bsdtar()
     if bsdtar is None:
         raise IntakeError("cannot open archives: bsdtar not found (built into macOS and Windows 10+; "
                           "on Linux install libarchive-tools)")
