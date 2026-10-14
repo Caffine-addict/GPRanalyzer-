@@ -229,6 +229,12 @@ def _mtime(job_dir: Path) -> int:
     return max(p.stat().st_mtime_ns for p in job_dir.iterdir())
 
 
+# Above this the semblance measurement reads low (Twente, 116 excavated surveys, 2026-10-14):
+# measured/reported median 1.05 at 8-11, 0.77 at 11-14, 0.61 above 14. Not corrected: that radar was
+# air-launched and ours is ground-coupled, so a Twente-fitted correction could not be checked here.
+WET_SOIL_EPS = 11.0
+
+
 def site_dielectric(dataset_dir: Path, site: str) -> tuple[float, str]:
     """The site's permittivity measured from its own hyperbolas, for lines whose header is unusable.
 
@@ -242,7 +248,11 @@ def site_dielectric(dataset_dir: Path, site: str) -> tuple[float, str]:
     measured = stacked_permittivity(curves)
     if measured is None:
         return _DEFAULT_DIELECTRIC, "default 9 (header unusable; too few clear arches to measure the site)"
-    return measured, f"measured on this site ({len(curves)} arches; header unusable)"
+    basis = f"measured on this site ({len(curves)} arches; header unusable)"
+    if measured > WET_SOIL_EPS:
+        basis += (f". Wet ground: on excavated Twente surveys this measurement read 23-39% low above "
+                  f"{WET_SOIL_EPS:g}, so depths here may be too shallow; dig with care and record the depths found")
+    return measured, basis
 
 
 def line_targets(job: str, job_dir: Path, line: PlacedLine, antenna_offset_uncertainty_m: float,

@@ -259,3 +259,16 @@ the authors if any of it is used.
 missing labels. It could still be useful as a cavity/intact image test, if split by original
 profile (`<id>_aug_<n>` → `<id>`) so that augmented copies of one profile never sit on both sides
 of the split.
+
+### Wet-soil bias in the velocity measurement (2026-10-14)
+
+Re-run of `scripts/validate_on_twente.py` (median error 21.9% vs 23.4% guessing, 116 surveys), now
+writing per-survey (reported, measured) pairs. The error is a bias that grows with wetness:
+measured/reported median **1.05** for reported permittivity 8-11 (n=55), **0.77** for 11-14 (n=31),
+**0.61** above 14 (n=30). Low readings make depths too shallow, the dangerous direction.
+
+Not corrected: Twente's antenna is air-launched and the company's is ground-coupled, so a fitted
+correction could not be checked on our radar. The company sites measure 6.3-8.5, inside the range
+where the method agrees with the surveyors. The Studio now warns when a site measures above 11
+(`studio/site_map.WET_SOIL_EPS`). The crossing-angle correction (an oblique crossing reads the
+velocity up to 44% fast) waits for confirmed pipe directions: on Set 1 the runs are not above chance.

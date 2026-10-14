@@ -17,7 +17,7 @@ jobs:
       TEST_DATABASE_URL: postgresql://gpr:ci-only@127.0.0.1:5432/gpr_test
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get install -y libarchive-tools  # bsdtar: archive intake reads zip/rar (sources/intake.py)
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libarchive-tools  # bsdtar: archive intake reads zip/rar (sources/intake.py)
       - uses: astral-sh/setup-uv@v5
         with: { enable-cache: true }
       - run: uv sync --all-extras --all-groups

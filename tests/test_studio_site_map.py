@@ -161,3 +161,11 @@ def test_every_target_on_the_map_carries_its_contrast_and_reading(monkeypatch: p
     assert targets and all("contrast" in t and "reading" in t for t in targets)
     # these test lines have one channel, so nothing can be read: the honest answer, not a guess
     assert {t["contrast"] for t in targets} == {"unreadable"} and {t["reading"] for t in targets} == {None}
+
+
+def test_a_wet_site_warns_that_its_depths_may_read_shallow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(site_map, "site_jobs", lambda *_: [])
+    for measured, warned in ((8.0, False), (14.0, True)):
+        monkeypatch.setattr(site_map, "stacked_permittivity", lambda _curves, m=measured: m)
+        value, basis = site_map.site_dielectric(tmp_path, "Site")
+        assert value == measured and ("too shallow" in basis) == warned
