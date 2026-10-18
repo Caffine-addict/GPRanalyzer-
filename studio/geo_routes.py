@@ -16,7 +16,17 @@ from fastapi.responses import Response
 
 from reference import sue_geo
 from studio import candidates as candidate_store
-from studio import dig_map, field_reports, geo_export, georef, gps_georef, session, site_map
+from studio import (
+    dig_map,
+    field_reports,
+    geo_export,
+    georef,
+    gps_georef,
+    runs,
+    session,
+    site3d,
+    site_map,
+)
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -237,6 +247,63 @@ def _site_collection(request: Request, site: str, antenna_offset_m: float = 0.15
         return site_map.site_geojson(_dataset_dir(request), site, antenna_offset_uncertainty_m=antenna_offset_m)
     except (ValueError, KeyError, session.JobNotFoundError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _scene(request: Request, site: str, channel: str, detected: bool) -> dict[str, Any]:
+    if site not in {entry["site"] for entry in list_sites(request)}:
+        raise HTTPException(status_code=404, detail=f"unknown site: {site!r}")
+    lines = []
+    for job in site_map.site_jobs(_dataset_dir(request), site):
+        job_dir = _job(request, job)
+        try:
+            kind, found = _source(job, job_dir)
+            lines.append(site3d.LineSource(job, job_dir, kind, found, _channels(job_dir)))
+        except (ValueError, KeyError, session.JobNotFoundError) as exc:
+            lines.append(site3d.LineSource(job, job_dir, None, None, {}, error=str(exc)))
+    return site3d.scene(site, lines, channel, lambda: site_map.site_dielectric(_dataset_dir(request), site),
+                        detected=detected)
+
+
+@router.get("/api/sites/{site}/scene.json")
+def site_scene(request: Request, site: str, channel: str = "RAD", detected: bool = True) -> dict[str, Any]:
+    """Every line of a site for the 3D view, placed by the same sources as the Map (studio/site3d.py)."""
+    return _scene(request, site, channel, detected)
+
+
+def _run_claims(request: Request, site: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    found = runs.site_runs(_scene(request, site, "RAD", detected=True))
+    try:
+        return found, runs.claims(site, found)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/sites/{site}/runs.json")
+def site_runs(request: Request, site: str) -> dict[str, Any]:
+    """Targets linked across neighbouring lines into utility runs, each a claim for review (studio/runs.py)."""
+    found, claims = _run_claims(request, site)
+    return {"site": site, "runs": claims, "chance": found["chance"], "excluded_lines": found["excluded_lines"]}
+
+
+@router.post("/api/sites/{site}/runs/{run_id}/decision")
+def decide_run(request: Request, site: str, run_id: str, payload: dict = Body(...)) -> dict[str, Any]:  # noqa: B008
+    """Confirm or reject a run, recorded under the signed-in account."""
+    if site not in {entry["site"] for entry in list_sites(request)}:
+        raise HTTPException(status_code=404, detail=f"unknown site: {site!r}")
+    try:
+        return runs.decide(site, run_id, str(payload.get("status", "")), request.state.user.username,
+                           str(payload.get("note", "")))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no run {run_id!r} on {site}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/sites/{site}/runs.geojson")
+def confirmed_runs_geojson(request: Request, site: str, download: bool = False) -> Response:
+    """Supervisor-confirmed runs as 3D lines, depth as Z, with the quality level they support."""
+    _found, claims = _run_claims(request, site)
+    return _geojson(runs.confirmed_geojson(site, claims), f"{_safe_filename(site)}_runs.geojson" if download else None)
 
 
 @router.get("/api/sites/{site}/field.geojson")

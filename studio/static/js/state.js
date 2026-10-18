@@ -58,7 +58,6 @@ let state = Object.freeze({
 
   cursor: null,        // {trace, sample} under the pointer, data coordinates
   drag: null,          // in-progress gesture, tool-specific
-  ascan: null,         // {trace, distance_m, sample_interval_ns, samples[]}
 
   picks: [],
   selectedPickId: null,  // the target the Interpretation panel is reading
@@ -77,6 +76,8 @@ let state = Object.freeze({
   reviewScope: "channel",  // Review panel: "channel" or "all"
   reviewer: "",            // the signed-in account: who review decisions are recorded under
   highlightReviewId: null,
+  siteRuns: null,          // {site, runs[], chance, excluded_lines[]} for the open line's site (studio/runs.py)
+  highlightRunId: null,
 
   palettes: [],
   reference: [],

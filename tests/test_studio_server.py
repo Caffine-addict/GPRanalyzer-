@@ -135,6 +135,14 @@ def test_trace_endpoint_returns_one_a_scan(client: TestClient, job: str) -> None
     assert len(body["samples"]) > 0
 
 
+def test_samples_endpoint_holds_every_trace_the_trace_endpoint_gives(client: TestClient, job: str) -> None:
+    response = client.get(f"/api/jobs/{job}/channels/RAD/samples.f32", params={"gain": "agc"})
+    n_traces, n_samples = int(response.headers["X-Traces"]), int(response.headers["X-Samples"])
+    line = np.frombuffer(response.content, dtype="<f4").reshape(n_traces, n_samples)
+    one = client.get(f"/api/jobs/{job}/channels/RAD/trace", params={"index": 10, "gain": "agc"}).json()
+    assert np.allclose(line[10], one["samples"], rtol=1e-5, atol=1e-3)
+
+
 def test_trace_endpoint_reflects_the_processing_chain(client: TestClient, job: str) -> None:
     # The wiggle has to show the same signal as the picture above it.
     raw = client.get(f"/api/jobs/{job}/channels/RAD/trace", params={"index": 10}).json()

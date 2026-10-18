@@ -213,6 +213,7 @@ function siteSection() {
     siteSummary(),
     el("div", { class: "interp-label", text: "Site map: everything found, with errors (suggestions)" }),
     el("a", { class: "btn ghost", href: api.siteDownloadUrl(siteName), text: `${siteName} — site GeoJSON` }),
+    el("a", { class: "btn ghost", href: api.runsGeojsonUrl(siteName), text: `${siteName} — confirmed utility runs (GeoJSON, depth as Z)` }),
     el("a", { class: "btn ghost", href: api.exportUrl("kml", `site:${siteName}`), text: `${siteName} — site KML` }),
     el("a", { class: "btn ghost", href: api.exportUrl("dxf", `site:${siteName}`), text: `${siteName} — site DXF` }),
     el("div", { class: "interp-label", text: "Dig map: supervisor-confirmed items only" }),

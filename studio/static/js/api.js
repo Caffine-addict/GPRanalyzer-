@@ -6,7 +6,7 @@
  * the useful part.
  */
 
-async function request(url, options) {
+async function request(url, options, read = (response) => response.json()) {
   const response = await fetch(url, options);
   if (response.status === 401) {
     // the session ended (expired, signed out elsewhere, password changed): sign in, then come back
@@ -23,7 +23,7 @@ async function request(url, options) {
     }
     throw new Error(detail);
   }
-  return response.json();
+  return read(response);
 }
 
 /** Serialise the processing chain + display settings into an image query string. */
@@ -62,10 +62,16 @@ export function peekUrl(job, channel, chainageM, view, halfSpanM = 1.5) {
   return `/api/jobs/${encodeURIComponent(job)}/channels/${encodeURIComponent(channel)}/image.png?${query}`;
 }
 
-export function getTrace(job, channel, index, processing) {
-  const query = new URLSearchParams({ index: String(index) });
+/** The whole processed line, one Float32Array per fetch: trace t is samples [t*nSamples, (t+1)*nSamples). */
+export function lineSamples(job, channel, processing) {
+  const query = new URLSearchParams();
   for (const [key, value] of Object.entries(processing)) query.set(key, String(value));
-  return request(`/api/jobs/${encodeURIComponent(job)}/channels/${channel}/trace?${query}`);
+  return request(`/api/jobs/${encodeURIComponent(job)}/channels/${encodeURIComponent(channel)}/samples.f32?${query}`,
+    undefined, async (response) => ({
+      nTraces: Number(response.headers.get("X-Traces")),
+      nSamples: Number(response.headers.get("X-Samples")),
+      data: new Float32Array(await response.arrayBuffer()),
+    }));
 }
 
 export function fitHyperbola(job, channel, region) {
@@ -143,6 +149,15 @@ export const decideReview = (job, reviewId, decision) =>
     body: JSON.stringify(decision),
   });
 
+export const siteRuns = (site) => request(`/api/sites/${encodeURIComponent(site)}/runs.json`);
+export const decideRun = (site, runId, decision) =>
+  request(`/api/sites/${encodeURIComponent(site)}/runs/${encodeURIComponent(runId)}/decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(decision),
+  });
+export const runsGeojsonUrl = (site) => `/api/sites/${encodeURIComponent(site)}/runs.geojson?download=true`;
+
 export const reviewsCsvUrl = (job) => `/api/jobs/${encodeURIComponent(job)}/reviews.csv`;
 export const reviewReportUrl = (job, channel) =>
   `/api/jobs/${encodeURIComponent(job)}/channels/${channel}/review_report.pdf`;
@@ -168,6 +183,16 @@ export const exportUrl = (format, scope) => `/api/geo/export.${format}?scope=${e
 /* ---------- field mode: a whole site on the map, the dig map, the crew's reports ---------- */
 const site = (name) => `/api/sites/${encodeURIComponent(name)}`;
 export const listSites = () => request("/api/sites");
+export const siteScene = (site, channel, detected = true) =>
+  request(`/api/sites/${encodeURIComponent(site)}/scene.json?${new URLSearchParams({ channel, detected })}`);
+
+/** One line's processed radargram between two chainages, at native size: a 3D curtain's texture. */
+export function curtainUrl(job, channel, fromM, toM, processing, display) {
+  const query = viewParams(processing, display);
+  query.set("from_m", fromM.toFixed(3));
+  query.set("to_m", toM.toFixed(3));
+  return `/api/jobs/${encodeURIComponent(job)}/channels/${encodeURIComponent(channel)}/image.png?${query}`;
+}
 export const siteGeojson = (name) => request(`${site(name)}/field.geojson`);
 export const digGeojson = (name, includeInterpreted = false) =>
   request(`${site(name)}/dig.geojson?include_interpreted=${includeInterpreted}`);

@@ -309,6 +309,23 @@ def channel_trace(request: Request, job_name: str, extension: str, index: int = 
     }
 
 
+@app.get("/api/jobs/{job_name}/channels/{extension}/samples.f32")
+def channel_samples(request: Request, job_name: str, extension: str) -> Response:
+    """The whole processed line as little-endian float32, one trace after another.
+
+    One fetch per line and processing chain: the A-scan and the status bar's amplitude then read
+    the trace under the cursor locally, on the same frame as X/T/Z, instead of a request per trace.
+    """
+    processing, _settings = _split_query(dict(request.query_params))
+    processed, _info, _chain = _processed(_job(request, job_name), extension, processing)
+    n_samples, n_traces = processed.shape
+    return Response(
+        content=np.ascontiguousarray(processed.T, dtype="<f4").tobytes(),
+        media_type="application/octet-stream",
+        headers={"X-Traces": str(n_traces), "X-Samples": str(n_samples), "Cache-Control": "private, max-age=300"},
+    )
+
+
 @app.post("/api/jobs/{job_name}/channels/{extension}/fit")
 def fit_hyperbola(
     request: Request,

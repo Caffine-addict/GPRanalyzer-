@@ -31,7 +31,7 @@ N_TRACES, N_SAMPLES = 384, 256
 
 def _info(**overrides) -> ChannelInfo:
     base: dict = {
-        "extension": "RAD", "label": "Ch 0 — shallow", "n_traces": N_TRACES, "n_samples": N_SAMPLES,
+        "extension": "RAD", "label": "RAD · shallow", "n_traces": N_TRACES, "n_samples": N_SAMPLES,
         "trace_spacing_m": 0.025, "sample_interval_ns": 0.1, "dielectric_assumed": 9.0,
         "line_length_m": 9.6, "time_window_ns": 25.6, "max_depth_m": 1.28,
     }

@@ -312,6 +312,7 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 .accordion.grow .accordion-body { flex: 1; min-height: 0; overflow-y: auto; }
 
 .panel-note { margin: 0; padding: 4px 14px 10px; font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+.panel-note.warn { color: var(--warn); }
 
 .hint {
   width: 16px; height: 16px; border-radius: 50%;
@@ -682,6 +683,9 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 /* ---------- supervisor review ---------- */
 
 .review-list { list-style: none; margin: 0; padding: 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.runs-section { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.runs-section > .interp-label, .runs-section > .panel-note, .runs-section > .empty { padding-left: 14px; padding-right: 14px; }
+.run-links { margin: 0; padding: 0 0 0 16px; font-family: var(--mono); font-size: 10.5px; }
 .review {
   border: 1px solid var(--line); border-radius: 7px;
   padding: 10px 12px; background: var(--bg-sink); cursor: pointer;
@@ -728,6 +732,40 @@ a.btn { text-decoration: none; }
 /* ---------- map view ---------- */
 .canvas-wrap[hidden], .ascan-strip[hidden] { display: none; }
 .map-view { position: relative; flex: 1; min-height: 0; }
+/* ---------- 3D site view ---------- */
+.scene-view { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-sink); }
+.scene-view[hidden] { display: none; }
+#scene3d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scene-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.scene-label { position: absolute; transform: translate(-50%, -120%); white-space: nowrap; font: 500 10.5px/1.3 var(--mono);
+  color: var(--text-dim); background: var(--overlay); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.scene-label.warn { color: var(--warn); border-color: var(--warn); }
+.scene-label.tick { transform: translate(6px, -50%); background: transparent; border: 0; padding: 0; color: var(--text-faint); }
+.scene-compass { position: absolute; left: 14px; bottom: 14px; z-index: 2; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--overlay); border: 1px solid var(--line-strong); display: grid; place-items: center; pointer-events: none; }
+.scene-compass span { display: grid; justify-items: center; line-height: 1; font-size: 10px; color: var(--accent-strong); }
+.scene-compass b { font: 600 10px/1 var(--mono); color: var(--text); }
+.scene-tip { position: absolute; z-index: 3; pointer-events: none; max-width: 300px; font-size: 12px; line-height: 1.45;
+  color: var(--text); background: var(--overlay); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 9px; }
+.scene-tip b { font-weight: 600; }
+.scene-panel { position: absolute; top: 10px; right: 10px; bottom: 10px; width: 270px; overflow-y: auto; z-index: 2;
+  background: var(--overlay); backdrop-filter: blur(8px); border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 10px 12px; font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 8px; }
+.scene-panel h4 { margin: 4px 0 0; font-size: 11px; font-weight: 600; color: var(--text-faint); letter-spacing: .03em; text-transform: uppercase; }
+.scene-panel .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.scene-panel select { flex: 1; min-width: 0; }
+.scene-panel input[type="range"] { flex: 1; width: auto; }
+.scene-panel .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.scene-panel .check.off { opacity: .55; cursor: not-allowed; }
+.scene-panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.scene-panel li { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 11px; }
+.scene-panel li button { all: unset; cursor: pointer; color: var(--text); }
+.scene-panel li button:hover, .scene-panel li button:focus-visible { color: var(--accent-strong); text-decoration: underline; }
+.scene-panel .muted { color: var(--text-faint); }
+.scene-panel .warn { color: var(--warn); }
+.scene-panel .note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+.scene-panel .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.scene-panel .swatch.ring { background: transparent !important; border: 2px solid currentColor; width: 7px; height: 7px; }
 .map-view[hidden] { display: none; }
 #map { position: absolute; inset: 0; background: var(--map-bg); }
 #map.picking, #map.picking .leaflet-interactive { cursor: crosshair; }
@@ -755,7 +793,10 @@ a.btn { text-decoration: none; }
 .map-card { padding: 8px 4px; width: 250px; }
 .map-card .check { padding: 4px 10px; }
 .map-note { margin: 6px 12px 4px; font-size: 11.5px; color: var(--text-faint); line-height: 1.45; }
-.map-legend { position: absolute; left: 12px; bottom: 30px; z-index: 500; padding: 10px 12px; min-width: 190px; }
+.map-legend { position: absolute; left: 12px; bottom: 30px; z-index: 500; padding: 6px 12px; }
+.map-legend[open] { min-width: 190px; padding-bottom: 10px; }
+.map-legend > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-dim); padding: 2px 0; }
+.map-legend[open] > summary { margin-bottom: 6px; }
 .legend-title { font-size: 11px; font-weight: 600; color: var(--text-faint); margin: 6px 0 4px; }
 .legend-title:first-child { margin-top: 0; }
 .legend-row { display: grid; grid-template-columns: 12px 1fr auto; gap: 8px; align-items: center; font-size: 12px; padding: 1px 0; color: var(--text-dim); }
@@ -785,8 +826,11 @@ a.btn { text-decoration: none; }
 /* Nothing in the toolbar may shrink: a squeezed <select> loses its text and shows only its
    arrow (seen on a real laptop screen). Labels go first, then the status pill, then dock width. */
 .toolbar > * { flex-shrink: 0; }
+/* ...except the status pill, which ellipsises instead of pushing the toolbar into a scrollbar. */
+.toolbar > .toolbar-right { flex-shrink: 1; min-width: 120px; }
+.toolbar-right .pill { min-width: 0; }
 #paletteSelect { min-width: 140px; }
-@media (max-width: 1500px) {
+@media (max-width: 1600px) { /* below this the labelled tools alone overflow (measured at 1568: 1583 px) */
   .seg .tool[data-tool] > span, .seg .tool[data-view] > span, #candidatesToggle > span { display: none; }
   .seg .tool[data-tool], .seg .tool[data-view], #candidatesToggle { padding: 0 9px; }
   .toolbar { gap: 8px; }

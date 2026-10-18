@@ -9,7 +9,7 @@
  */
 
 import { checkboxRow, el, field, numberInput, replace, selectInput } from "./dom.js";
-import { DEFAULT_PROCESSING, getState, setState } from "./state.js";
+import { DEFAULT_PROCESSING, activeChannel, getState, setState } from "./state.js";
 
 const container = document.getElementById("processingPanel");
 
@@ -45,6 +45,8 @@ export function describeChain(processing) {
 
 export function render() {
   const p = getState().processing;
+  const channel = activeChannel();
+  const noCentre = channel && !channel.antenna_freq_mhz;
 
   replace(
     container,
@@ -61,6 +63,7 @@ export function render() {
 
     el("div", { class: "group-title", text: "4 · Band-pass" }),
     checkboxRow("Frequency filter", p.bandpass, (bandpass) => update({ bandpass })),
+    noCentre ? el("p", { class: "panel-note warn", text: `This file's header records no antenna centre frequency, so Standard view leaves band-pass off. Set the cut-offs only if you know the antenna (${channel.extension}).` }) : null,
     p.bandpass ? field("Low cut", numberInput(p.bandpass_low_mhz, (v) => update({ bandpass_low_mhz: v }), { min: 1 }), { sub: true, unit: "MHz" }) : null,
     p.bandpass ? field("High cut", numberInput(p.bandpass_high_mhz, (v) => update({ bandpass_high_mhz: v }), { min: 2 }), { sub: true, unit: "MHz" }) : null,
 
