@@ -45,6 +45,7 @@ from studio import (
     geo_routes,
     imports,
     interpret,
+    line_trash,
     render,
     session,
     velocity,
@@ -192,6 +193,31 @@ def list_palettes() -> list[dict]:
 @app.get("/api/jobs")
 def list_jobs(request: Request) -> list[str]:
     return session.list_jobs(_dataset_dir(request))
+
+
+@app.delete("/api/jobs/{job_name}")
+def remove_line(request: Request, job_name: str, payload: dict = Body(...)) -> dict:  # noqa: B008
+    """Take a line out of the project, recoverably (studio/line_trash.py). The body must repeat the
+    line's name, so no stray request removes one by accident."""
+    _job(request, job_name)
+    if payload.get("confirm") != job_name:
+        raise HTTPException(status_code=422, detail="to remove a line, confirm with its exact name")
+    return line_trash.remove(_dataset_dir(request), job_name, request.state.user.username)
+
+
+@app.get("/api/removed-lines")
+def removed_lines(request: Request) -> list[dict]:
+    return line_trash.removed(_dataset_dir(request))
+
+
+@app.post("/api/removed-lines/{entry_id}/restore")
+def restore_line(request: Request, entry_id: str) -> dict:
+    try:
+        return line_trash.restore(_dataset_dir(request), entry_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no removed line {entry_id!r}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs/{job_name}")

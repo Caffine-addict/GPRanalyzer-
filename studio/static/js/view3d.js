@@ -47,8 +47,19 @@ let loading = 0;
 let frameQueued = false;
 let handlers = {};
 let runs = null;           // the site's runs.json: proposed / confirmed / rejected claims
+let ground = null;         // the site's ground.json: each line's measured dielectric, and its sections
 let runMeshes = [];        // { run, mesh }
-const options = { exaggeration: 2, lines: true, targets: true, runs: true };
+const options = { exaggeration: 2, lines: true, targets: true, runs: true, ground: false };
+/* Measured dielectric as a colour: drier (lower) blue through green to amber at the wet-ground
+ * threshold (studio/site_map.WET_SOIL_EPS = 11) and red beyond. Not a soil type: see studio/ground.py. */
+const GROUND_STOPS = [[4, "#3b82f6"], [7, "#22c55e"], [11, "#f59e0b"], [16, "#ef4444"]];
+const WET_EPS = 11;
+function groundColour(eps) {
+  if (eps == null) return "#71717a";
+  const [lo, hi] = [GROUND_STOPS.findLast(([v]) => v <= eps) ?? GROUND_STOPS[0], GROUND_STOPS.find(([v]) => v > eps) ?? GROUND_STOPS.at(-1)];
+  const f = hi[0] === lo[0] ? 0 : (eps - lo[0]) / (hi[0] - lo[0]);
+  return `#${new THREE.Color(lo[1]).lerp(new THREE.Color(hi[1]), f).getHexString()}`;
+}
 const RUN_STYLE = {
   proposed: { colour: REVIEW_STYLES.proposed.colour, opacity: 0.45 },
   confirmed: { colour: REVIEW_STYLES.confirmed.colour, opacity: 1 },
@@ -86,7 +97,7 @@ async function refresh() {
     if (key !== shownKey) return;
     data = scene;
     build(false);
-    await loadRuns();
+    await Promise.all([loadRuns(), loadGround()]);
   } catch (error) {
     renderPanel(`Could not refresh ${wanted.site}: ${error.message}`);
   }
@@ -111,7 +122,7 @@ export async function update(view) {
       if (!current()) return;
       data = full;
       build(false);
-      await loadRuns();
+      await Promise.all([loadRuns(), loadGround()]);
     } catch (error) {
       shownKey = "";
       renderPanel(`Could not load ${wanted.site}: ${error.message}`);
@@ -213,6 +224,7 @@ function build(refit) {
   for (const line of data.lines) addCurtain(line);
   for (const spot of data.located) addLocated(spot);
   addMarkers();
+  addGroundRibbons();
   addDepthScale();
   gl.scene.add(world);
   addGrid();
@@ -253,7 +265,9 @@ function addCurtain(line) {
   curtains.push({ line, mesh, url, state: textures.has(url) ? "done" : inFlight.has(url) ? "loading" : "idle" });
   if (textures.has(url)) applyTexture(mesh, textures.get(url));
   const [e, n] = line.path[0].slice(1);
-  addLabel(line.job.replace(/^[^_]*_/, ""), new THREE.Vector3(e, 0, -n));
+  const measured = options.ground && ground?.site === data.site ? ground.lines.find((g) => g.job === line.job) : null;
+  const value = measured ? (measured.dielectric == null ? " · ε not measured" : ` · ε ${measured.dielectric}`) : "";
+  addLabel(line.job.replace(/^[^_]*_/, "") + value, new THREE.Vector3(e, 0, -n));
 }
 
 function addLocated(spot) {
@@ -418,6 +432,74 @@ function applyVisibility() {
 }
 
 /* ---------- utility runs (studio/runs.py) as tubes through the targets they link ---------- */
+
+/* ---------- ground: each line's measured dielectric (studio/ground.py) ---------- */
+
+async function loadGround() {
+  const site = data.site;
+  try {
+    const found = await api.siteGround(site);
+    if (data?.site !== site) return;
+    ground = found;
+  } catch (error) {
+    ground = { site, lines: [], sections: [], error: error.message };
+  }
+  if (options.ground) build(false); else renderPanel();
+}
+
+/** A coloured ribbon on the ground along each line, by its measured dielectric. */
+function addGroundRibbons() {
+  if (!options.ground || ground?.site !== data.site) return;
+  const width = Math.max(0.25, siteRadius() / 80); // visible from a whole-site view, narrower than line spacing
+  for (const line of data.lines) {
+    const measured = ground.lines.find((g) => g.job === line.job);
+    if (!measured || line.path.length < 2) continue;
+    const positions = [];
+    const index = [];
+    line.path.forEach(([, e, n], i) => {
+      const [, e0, n0] = line.path[Math.max(0, i - 1)];
+      const [, e1, n1] = line.path[Math.min(line.path.length - 1, i + 1)];
+      const len = Math.hypot(e1 - e0, n1 - n0) || 1;
+      const [ox, oz] = [(-(n1 - n0) / len) * width / 2, (-(e1 - e0) / len) * width / 2]; // sideways, in plan
+      positions.push(e + ox, 0.02, -n + oz, e - ox, 0.02, -n - oz);
+      if (i) index.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i, 2 * i - 1, 2 * i + 1);
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(index);
+    const ribbon = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: groundColour(measured.dielectric), side: THREE.DoubleSide,
+      transparent: measured.dielectric == null, opacity: measured.dielectric == null ? 0.5 : 1 }));
+    ribbon.name = "curtain";
+    world.add(ribbon);
+  }
+}
+
+function groundPanel() {
+  if (ground?.site !== data.site) return [el("h4", { text: "Ground" }), el("p", { class: "note", text: "Measuring each line's dielectric…" })];
+  if (ground.error) return [el("h4", { text: "Ground" }), el("p", { class: "note warn", text: `Could not measure: ${ground.error}` })];
+  const name = (job) => job.replace(/^[^_]*_/, "");
+  const notMeasured = ground.lines.filter((g) => g.dielectric == null).map((g) => name(g.job));
+  const placed = new Set(ground.sections.flatMap((z) => z.lines));
+  const unplacedMeasured = ground.lines.filter((g) => g.dielectric != null && !placed.has(g.job));
+  return [
+    el("h4", { text: `Ground · ${ground.sections.length} section${ground.sections.length === 1 ? "" : "s"}` }),
+    el("label", { class: "check" }, [el("input", { type: "checkbox", checked: options.ground,
+      onchange: (e) => { options.ground = e.target.checked; build(false); } }), el("span", { text: "Colour lines by measured dielectric" })]),
+    el("ul", {}, GROUND_STOPS.map(([v, c]) => legendRow(c, v >= WET_EPS ? `ε ${v}${v === WET_EPS ? " · wet ground from here" : ""}` : `ε ${v}`))),
+    el("ul", {}, ground.sections.map((z, i) => el("li", { title: `Lines: ${z.lines.map(name).join(", ")}` +
+      (z.outliers.length ? `\nOutlier (one line disagreeing, kept in the section): ${z.outliers.map(name).join(", ")}` : "") }, [
+      el("span", {}, [el("span", { class: "swatch", style: `background:${groundColour(z.dielectric)}` }), `Section ${i + 1} · ${z.lines.length} lines`]),
+      el("span", { class: z.wet ? "warn" : "muted", text: `ε ${z.dielectric} (${z.range[0]}–${z.range[1]}) · v ${z.velocity_m_per_ns}` }),
+    ]))),
+    unplacedMeasured.length ? el("p", { class: "note", text: `Measured but not placed in a section (no usable position): ` +
+      unplacedMeasured.map((g) => `${name(g.job)} ε ${g.dielectric}`).join(", ") + "." }) : null,
+    notMeasured.length ? el("p", { class: "note", text: `Not measured (fewer than ${ground.min_arches} clear hyperbolas): ${notMeasured.join(", ")}.` }) : null,
+    el("p", { class: "note", text: `Each value comes from that line's own clearest hyperbolas: typical error about ${Math.round(ground.typical_error * 100)}%, ` +
+      `so sections split only where two neighbouring lines differ by more than ${Math.round(ground.section_split * 100)}%. ` +
+      "Dielectric mostly tracks water, not soil type. Depths still use each line's existing velocity." }),
+  ];
+}
 
 async function loadRuns() {
   const site = data.site;
@@ -706,6 +788,7 @@ function renderPanel(message) {
       el("button", { text: `${r.lines} lines · ${r.depth_m} m`, title: "Show it close up; click the tube for its Review card",
         onclick: () => focusRun(r) }),
       el("span", { class: r.status === "proposed" ? "warn" : "muted", text: r.status })]))) : null,
+    ...groundPanel(),
     el("h4", { text: `Lines (${data.lines.length})` }), el("ul", {}, lines),
     data.located.length ? el("h4", { class: "warn", text: `⚠ Location only, GPS froze (${data.located.length})` }) : null,
     data.located.length ? el("p", { class: "note", text: "Drawn as the circle the survey happened in. Their direction is unknown, " +

@@ -41,6 +41,9 @@ function reviewItem(review, state) {
 
 const siteOf = (job) => (job?.includes("_") ? job.split("_")[0] : null);
 let runsFor = null; // the site whose runs are loaded or loading
+let sites = null;   // Promise of the project's site names, asked once per page; reset when lines come or go
+
+export function forgetSites() { sites = null; runsFor = null; }
 
 /** Fetch the open line's site's runs; `force` after a decision. Also used by the 3D view's clicks. */
 export async function loadRuns(force = false) {
@@ -48,12 +51,19 @@ export async function loadRuns(force = false) {
   if (!site || (!force && runsFor === site)) return;
   runsFor = site;
   try {
+    sites ??= api.listSites().then((list) => new Set(list.map((entry) => entry.site)));
+    if (!(await sites).has(site)) { // a site needs two or more lines sharing a name prefix
+      if (runsFor === site) setState({ siteRuns: { site, runs: [], notASite: true } });
+      return;
+    }
     const found = await api.siteRuns(site);
     if (runsFor === site) setState({ siteRuns: found });
   } catch (error) {
+    // No automatic retry: renders come many times a second. A line that is not part of a site
+    // (a site needs two or more lines sharing a name prefix) simply has no runs.
     if (runsFor !== site) return;
-    runsFor = null; // ask again on the next render
-    setState({ siteRuns: { site, runs: [], error: error.message } });
+    const notASite = /unknown site/.test(error.message);
+    setState({ siteRuns: { site, runs: [], notASite, error: notASite ? null : error.message } });
   }
 }
 
@@ -106,10 +116,12 @@ function runsSection(state) {
   if (!site) return null;
   const found = state.siteRuns?.site === site ? state.siteRuns : null;
   if (!found) return el("p", { class: "panel-note", text: `Linking targets across ${site}'s lines…` });
+  if (found.notASite) return null;
   const waiting = found.runs.filter((r) => r.status === "proposed").length;
   return el("div", { class: "runs-section" }, [
     el("div", { class: "interp-label", text: `Utility runs on ${site} · ${found.runs.length} (${waiting} waiting)` }),
-    found.error ? el("p", { class: "panel-note warn", text: `Could not link runs: ${found.error}` }) : null,
+    found.error ? el("p", { class: "panel-note warn" }, [`Could not link runs: ${found.error} `,
+      el("button", { class: "btn ghost", text: "Try again", onclick: () => loadRuns(true) })]) : null,
     found.excluded_lines?.length ? el("p", { class: "panel-note", text: `Not linked (no usable position): ${found.excluded_lines.map((l) => l.job).join(", ")}.` }) : null,
     found.runs.length
       ? el("ul", { class: "review-list" }, [...found.runs]

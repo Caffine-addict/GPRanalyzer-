@@ -63,8 +63,20 @@ function replyBlock(reply) {
     nodes.push(el("div", { class: "interp-label", text: "Next steps" }),
       el("ul", { class: "steps" }, reply.next_steps.map((s) => el("li", { text: s }))));
   }
+  const checks = reply.checks ?? {};
+  if (checks.unsupported_numbers?.length || checks.evidence_gaps?.length) {
+    nodes.push(el("div", { class: "panel-note warn" }, [
+      el("b", { text: "Check before relying on this reply. " }),
+      checks.unsupported_numbers?.length
+        ? `Numbers not in the data the model was given (it may have counted or calculated them itself): ${checks.unsupported_numbers.join(", ")}. ` : "",
+      checks.evidence_gaps?.length ? `Citations that do not hold: ${checks.evidence_gaps.join("; ")}.` : "",
+    ]));
+  }
   if (reply.model) {
-    nodes.push(el("p", { class: "panel-note", text: `${reply.model} · ${reply.latency_ms} ms${reply.cached ? " · cached" : ""} · written by a model, not measured` }));
+    const p = reply.provenance;
+    nodes.push(el("p", { class: "panel-note", text: `Written by ${reply.model}` +
+      (p ? ` · prompt ${p.prompt_version} · ${p.generated_at.replace("T", " ").replace("+00:00", " UTC")} · asked by ${p.asked_by}` : "") +
+      ` · ${reply.latency_ms} ms${reply.cached ? " · cached" : ""} · not checked by a person` }));
   }
   if (reply.context_text) {
     nodes.push(el("details", { class: "interp-evidence" }, [

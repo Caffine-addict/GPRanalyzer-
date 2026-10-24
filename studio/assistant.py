@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import statistics
 import time
 from collections import Counter, defaultdict
@@ -54,9 +55,15 @@ _MATERIAL_CLAIMS = {"metallic", "non-metallic, air-filled", "non-metallic, water
 MATERIAL_CAP_NOTE = "capped to low: no material measurement is validated on this instrument yet"
 _PROMPT = Path(__file__).resolve().parent.parent / "reason" / "prompts" / "v1_assistant.txt"
 # gpt-oss spends completion tokens reasoning before it writes; 2048 truncated a 12-claim reply
-# mid-JSON on a real line (Job_0703 RAD), so the layers get room the pipeline's 1024 does not need.
-_MAX_TOKENS = 4096
+# mid-JSON on a real line (Job_0703 RAD), and cited evidence per claim (2026-10-24) pushed a 27-claim
+# summary past 4096. Room for MAX_MENTIONS claims with their evidence, inside Groq's per-minute budget.
+_MAX_TOKENS = 6144
+MAX_MENTIONS = 12  # the prompt asks for the most important ones; a list of every target is not a summary
 _MAX_HISTORY_TURNS = 6  # chat context kept small: Groq's free tier allows ~8k tokens a minute
+
+# What a claim may cite as its evidence: every measured target field shown to the model (_SHOWN, less id/kind).
+EVIDENCE_FIELDS = ("position_m", "depth_m", "depth_basis", "shape", "suggested_class", "fit_r2",
+                   "implied_dielectric", "polarity", "relative_amplitude", "below_usable_depth")
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -69,13 +76,16 @@ SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["target_id", "identity", "material", "confidence", "why"],
+                "required": ["target_id", "identity", "material", "confidence", "why", "evidence"],
                 "properties": {
                     "target_id": {"type": "string"},
                     "identity": {"type": "string"},
                     "material": {"type": "string", "enum": MATERIALS},
                     "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
                     "why": {"type": "string"},
+                    # The target fields the claim rests on (EVIDENCE_FIELDS): a citation grounding_checks
+                    # verifies. Not an enum: Groq's strict mode refused the schema with one (json_validate_failed).
+                    "evidence": {"type": "array", "items": {"type": "string"}},
                 },
             },
         },
@@ -89,7 +99,8 @@ LAYER_INSTRUCTIONS = {
     "line_summary": "Summarise the line as an interpreter would for a supervisor: how many targets look "
                     "like real point reflectors, which line up as a possible continuous utility run (similar "
                     "depth at regular spacing, or the same target seen on several channels), which are "
-                    "weak or doubtful and why, and what to check next. Mention each target you discuss.",
+                    "weak or doubtful and why, and what to check next. Mention the targets you discuss "
+                    "(at most 12, the ones that matter most).",
     "what_is_what": "For each target worth identifying, say what it most likely is. First the material from "
                     "echo polarity and amplitude (metal and water-filled plastic reverse the direct wave's "
                     "polarity with a strong, ringing echo for metal; air-filled plastic keeps it), then size "
@@ -232,6 +243,8 @@ def line_targets(candidates: list[Candidate], picks: list[Pick], info: ChannelIn
 
 _SHOWN = ("id", "kind", "position_m", "depth_m", "depth_basis", "shape", "suggested_class", "fit_r2",
           "implied_dielectric", "polarity", "relative_amplitude", "below_usable_depth")
+assert _SHOWN[2:] == EVIDENCE_FIELDS  # a field shown to the model is a field it may cite
+
 
 
 def line_context(job: str, info: ChannelInfo, targets: list[dict[str, Any]],
@@ -320,6 +333,7 @@ class Reply:
     latency_ms: float
     context_text: str
     error: str | None
+    checks: dict[str, list[str]] | None = None  # grounding_checks: what in the reply the data does not support
 
 
 def build_prompt(layer: str, context: dict[str, Any], question: str = "",
@@ -376,8 +390,47 @@ def _parsed(raw: dict[str, Any], model: str, targets: list[dict[str, Any]], cont
             mention = {**mention, "confidence": "low", "why": f"{mention.get('why', '')} [{MATERIAL_CAP_NOTE}]"}
         mentions.append({**mention, "target_kind": target["kind"], "target_ref": target["ref"],
                          **{k: target[k] for k in ("x", "y", "w", "h", "position_m", "depth_m")}})
-    return Reply(str(raw.get("answer", "")), mentions, dropped, [str(s) for s in raw.get("next_steps", [])],
-                 model, _elapsed(start), context_text, None)
+    for mention in mentions:  # what the claim rests on travels with it into the Review panel and reports
+        if mention.get("evidence"):
+            mention["why"] = f"{mention.get('why', '')} [rests on: {', '.join(mention['evidence'])}]"
+    answer, next_steps = str(raw.get("answer", "")), [str(s) for s in raw.get("next_steps", [])]
+    checks = grounding_checks([answer, *next_steps, *(str(m.get("why", "")) for m in mentions)], context_text,
+                              mentions, by_id)
+    return Reply(answer, mentions, dropped, next_steps, model, _elapsed(start), context_text, None, checks)
+
+
+_NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?")
+
+
+def grounding_checks(texts: list[str], context_text: str, mentions: list[dict[str, Any]],
+                     by_id: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """What the model wrote that the data it was given does not support. Flagged, never silently removed.
+
+    - A number is supported when the context holds the same value to the precision written (0.3 for
+      0.296 passes; 0.4 does not). Arithmetic the model did itself (a difference, a unit change) is
+      flagged too: it may be right, but it was not measured, and a reader should know.
+    - A claim's cited evidence must be a field the target actually has a value for.
+    """
+    known = [float(n) for n in _NUMBER.findall(context_text)]
+    unsupported = []
+    for token in sorted({n for text in texts for n in _NUMBER.findall(text)}, key=float):
+        decimals = len(token.split(".")[1]) if "." in token else 0
+        if not any(abs(float(token) - k) <= 0.5 * 10 ** -decimals + 1e-9 for k in known):
+            unsupported.append(token)
+    gaps = []
+    for mention in mentions:
+        target = by_id.get(str(mention.get("target_id")), {})
+        if not mention.get("evidence"):
+            gaps.append(f"{mention.get('target_id')}: cites no evidence")
+        for field in mention.get("evidence") or []:
+            if target.get(field) is None:
+                gaps.append(f"{mention.get('target_id')}: cites {field}, which this target does not have")
+    return {"unsupported_numbers": unsupported, "evidence_gaps": gaps}
+
+
+def prompt_version() -> str:
+    """The assistant prompt as it is now, as a short hash: reports name exactly which wording was used."""
+    return hashlib.sha256(_PROMPT.read_bytes()).hexdigest()[:10]
 
 
 def fingerprint(layer: str, context_text: str, question: str, history: list[dict[str, str]] | None) -> str:

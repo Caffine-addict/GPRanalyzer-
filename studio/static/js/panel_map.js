@@ -30,6 +30,10 @@ let siteField = null;
 let siteDig = null;
 let withInterpreted = false;
 let siteStatus = "";
+// The site's survey report (studio/survey_report.py): its project form, sign-off and status.
+let report = null;       // GET /report for `reportFor`
+let reportFor = "";
+let reportNote = "";
 
 export function init(handlers) {
   callbacks = handlers;
@@ -191,6 +195,63 @@ function siteSummary() {
   ]);
 }
 
+async function loadReport(force = false) {
+  if (!siteName || (!force && reportFor === siteName)) return;
+  reportFor = siteName;
+  report = null;
+  try {
+    const found = await api.siteReport(siteName);
+    if (reportFor === siteName) report = found;
+  } catch (error) {
+    if (reportFor === siteName) reportNote = `Could not load the report: ${error.message}`;
+  }
+  paint();
+}
+
+function reportSection() {
+  if (reportFor !== siteName) loadReport();
+  const head = el("div", { class: "interp-label", text: "Survey report (PAS 128:2022 structure)" });
+  if (!report) return [head, el("p", { class: "panel-note", text: reportNote || "Assembling the report status…" })];
+  const fields = Object.entries(report.fields).map(([key, label]) => el("label", { class: "report-field" }, [
+    el("span", { text: label }), el("textarea", { rows: 2, "data-key": key, value: report.form[key] ?? "" })]));
+  const formBox = el("details", { class: "report-form", open: !report.prepared_by }, [
+    el("summary", { text: report.prepared_by ? `Project form · saved by ${report.prepared_by}` : "Project form · not filled in" }),
+    ...fields,
+    el("button", { class: "btn", text: "Save form", onclick: async () => {
+      const form = Object.fromEntries([...formBox.querySelectorAll("textarea")].map((t) => [t.dataset.key, t.value]));
+      try { await api.saveReportForm(siteName, form); reportNote = "Form saved: the report is a draft until someone else approves it."; }
+      catch (error) { reportNote = `Not saved: ${error.message}`; }
+      loadReport(true);
+    } }),
+  ]);
+  const me = getState().reviewer;
+  const own = report.prepared_by && me && report.prepared_by.toLowerCase() === me.toLowerCase();
+  const competence = el("input", { type: "text", placeholder: "your competence (training, qualifications)" });
+  const s = report.status;
+  return [head,
+    el("div", { class: `verdict${s.state === "APPROVED" ? "" : " flag"}`,
+      text: s.state === "APPROVED" ? `Approved by ${s.approval.by} (${s.approval.competence}) at ${s.approval.at}`
+        : `Draft: ${s.why}` }),
+    el("a", { class: "btn ghost", href: api.surveyReportUrl(siteName), target: "_blank", rel: "noopener",
+      text: `${siteName} — survey report (PDF)` }),
+    formBox,
+    s.state === "APPROVED" ? null : el("div", { class: "report-approve" }, [
+      competence,
+      el("button", { class: "btn good", text: "Approve this report", disabled: !report.prepared_by || own,
+        title: !report.prepared_by ? "Fill in and save the project form first" : own ? "Another account must approve the report you prepared" : "",
+        onclick: async () => {
+          try { await api.approveReport(siteName, competence.value, report.content_hash); reportNote = "Approved."; }
+          catch (error) { reportNote = `Not approved: ${error.message}`; }
+          loadReport(true);
+        } }),
+      own ? el("p", { class: "panel-note", text: "You prepared this report: another account must approve it." }) : null,
+    ]),
+    reportNote ? el("p", { class: "panel-note", text: reportNote }) : null,
+    el("p", { class: "panel-note", text: "Built from the published PAS 128:2022 client guides; the BSI text was not consulted. "
+      + "Approval holds only while the report reads exactly as approved." }),
+  ];
+}
+
 function siteSection() {
   if (sites === null) {
     loadSites();
@@ -199,7 +260,7 @@ function siteSection() {
   if (!sites.length) return el("p", { class: "panel-note", text: "No sites yet: name lines <site>_<line> (e.g. Set1_LINE001) and they group into a site." });
   return el("div", { class: "export-list" }, [
     el("div", { class: "interp-label", text: "Field mode — a whole site" }),
-    el("select", { onchange: (event) => { siteName = event.target.value; siteField = null; siteDig = null; paint(); } },
+    el("select", { onchange: (event) => { siteName = event.target.value; siteField = null; siteDig = null; reportNote = ""; paint(); } },
       sites.map((s) => el("option", { value: s.site, text: `${s.site} · ${s.lines} lines`, selected: s.site === siteName }))),
     el("label", { class: "check" }, [
       el("input", { type: "checkbox", checked: withInterpreted, onchange: (event) => { withInterpreted = event.target.checked; } }),
@@ -211,6 +272,7 @@ function siteSection() {
     ]),
     siteStatus ? el("p", { class: "panel-note", text: siteStatus }) : null,
     siteSummary(),
+    ...reportSection(),
     el("div", { class: "interp-label", text: "Site map: everything found, with errors (suggestions)" }),
     el("a", { class: "btn ghost", href: api.siteDownloadUrl(siteName), text: `${siteName} — site GeoJSON` }),
     el("a", { class: "btn ghost", href: api.runsGeojsonUrl(siteName), text: `${siteName} — confirmed utility runs (GeoJSON, depth as Z)` }),

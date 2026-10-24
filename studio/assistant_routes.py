@@ -11,6 +11,7 @@ import io
 import json
 import os
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -93,13 +94,33 @@ def _ask(request: Request, layer: str, context: dict[str, Any], targets: list[di
         return {**cached, "cached": True}
     reply = assistant.run(_client(request), _models(config), layer, context, targets, question, history,
                           temperature=config.reasoning.temperature)
-    result = {**asdict(reply), "layer": layer, "cached": False}
+    result = {**asdict(reply), "layer": layer, "cached": False,
+              # Every model-written reply says what wrote it, from what, and that no person has checked it.
+              "provenance": {"model": reply.model, "prompt_version": assistant.prompt_version(),
+                             "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                             "input_fingerprint": key[:16], "asked_by": request.state.user.username,
+                             "reviewed": False}}
     if reply.error is None:
+        _archive(result, question)
         cache = _cache(request)
         if len(cache) >= _CACHE_LIMIT:
             cache.pop(next(iter(cache)))
         cache[key] = result
     return result
+
+
+_AUDIT_ROOT = Path("annotations") / "_audit"
+
+
+def _archive(result: dict[str, Any], question: str) -> None:
+    """Keep every fresh model reply with exactly what it was shown: PAS 128:2022 asks for processed
+    data and the steps between to be kept six years as an audit trail. One JSON line per reply."""
+    _AUDIT_ROOT.mkdir(parents=True, exist_ok=True)
+    month = result["provenance"]["generated_at"][:7]
+    record = {key: result[key] for key in ("provenance", "layer", "answer", "mentions", "dropped", "next_steps",
+                                            "checks", "context_text")}
+    with (_AUDIT_ROOT / f"assistant-{month}.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**record, "question": question}, default=str) + "\n")
 
 
 _HISTORY_ROLES = ("operator", "assistant")

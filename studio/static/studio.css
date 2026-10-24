@@ -820,6 +820,13 @@ a.btn { text-decoration: none; }
 .link-btn.danger:hover { background: rgba(239, 68, 68,.12); }
 .export-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 6px; }
 .export-list .btn { flex: none; justify-content: flex-start; }
+.report-form { display: grid; gap: 6px; }
+.report-form summary { cursor: pointer; font-size: 12px; color: var(--text-dim); }
+.report-field { display: grid; gap: 2px; font-size: 11.5px; color: var(--text-dim); }
+.report-field textarea { width: 100%; resize: vertical; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg-sink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
+.report-approve { display: grid; gap: 6px; }
+.report-approve input { width: 100%; }
 .ok-note { color: var(--fit) !important; }
 
 /* ---------- narrower windows ---------- */

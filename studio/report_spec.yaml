@@ -1,0 +1,117 @@
+# The survey report's structure: PAS 128:2022's minimum contents for a Type B (detection) report.
+#
+# Built from the two public client guides, NOT from the BSI text of PAS 128:2022 (sold by BSI, not yet
+# held by this project). When the standard itself is obtained, check each `requirement` against it and
+# edit this file: studio/survey_report.py renders whatever is listed here, in this order.
+#
+# filled_by: data  - written from the Studio's own measurements
+#            form  - written from the project form someone fills in (studio/survey_report.py FORM_FIELDS)
+#            both  - data and form together
+
+basis: >-
+  Structured to the minimum contents of a PAS 128:2022 Type B survey report as published in the CICES
+  "PAS 128:2022 Client Specification Guide" (September 2022, section 5 Deliverables) and the TSA
+  "Client Guide to BS EN PAS 128:2022" (Issue 3, May 2025, The survey report). The BSI text of
+  PAS 128:2022 was not consulted.
+sources:
+  cices: CICES, PAS 128:2022 Client Specification Guide, Sept 2022, s.5 Deliverables
+  tsa: TSA, Client Guide to BS EN PAS 128:2022, Issue 3, May 2025, The survey report
+
+sections:
+  - id: "01"
+    title: Survey requirements and survey area
+    requirement: Written description of the survey project requirements and defined survey area.
+    source: cices
+    filled_by: both
+  - id: "02"
+    title: Detection methodologies used
+    requirement: List of the detection methodologies used during the survey.
+    source: cices
+    filled_by: data
+  - id: 03a
+    title: Plan of the results
+    requirement: Survey outcomes including planimetric information.
+    source: cices
+    filled_by: data
+  - id: 03b
+    title: Metadata
+    requirement: Survey outcomes including metadata.
+    source: cices
+    filled_by: data
+  - id: 03c
+    title: How well each method worked
+    requirement: >-
+      A description of how successful each detection methodology was and a plan showing any areas where
+      the detection methodologies were not successful.
+    source: cices
+    filled_by: data
+  - id: 03d
+    title: Utilities expected from records but not detected
+    requirement: >-
+      A list of any utilities expected to be present based on the desktop utility records search that
+      were not detectable using the detection methodologies.
+    source: cices
+    filled_by: data
+  - id: 03e
+    title: Other buried features and obstructions
+    requirement: A list of buried features and obstructions other than utilities detected during the survey.
+    source: cices
+    filled_by: data
+  - id: 03f
+    title: Conflicts between records and detections
+    requirement: Plans showing all areas of conflict between record information, site information and detected utilities.
+    source: cices
+    filled_by: data
+  - id: 03g
+    title: Photographs
+    requirement: Photographs as specified or where taken to support understanding.
+    source: cices
+    filled_by: form
+  - id: 03h
+    title: Recommendations for further survey work
+    requirement: Recommendations for any further survey work.
+    source: cices
+    filled_by: data
+  - id: 03i
+    title: GPR calibration
+    requirement: Information on how GPR was calibrated and how many calibrations have been conducted around the site.
+    source: cices
+    filled_by: data
+  - id: 03j
+    title: Post-processing software
+    requirement: What post-processing software has been used to post-process the GPR results.
+    source: cices
+    filled_by: data
+  - id: 03k
+    title: Depth of GPR penetration across the site
+    requirement: The variations in depth of the GPR penetration achieved around the site.
+    source: cices
+    filled_by: data
+  - id: 03l
+    title: Site conditions
+    requirement: >-
+      The conditions on site at the time of the survey and any issues that might generically affect the
+      survey outputs, for example rain.
+    source: cices
+    filled_by: both
+  - id: "04"
+    title: Post-survey debrief
+    requirement: >-
+      A post-survey debrief in person or by video, noted and the outcome recorded in writing for both
+      client and practitioner.
+    source: cices
+    filled_by: form
+  - id: QL
+    title: Utilities and their quality levels
+    requirement: >-
+      Each utility segment carries the quality level it supports (QL-B1 to QL-B4 for detection), with a P
+      suffix where GPR data was post-processed.
+    source: tsa
+    filled_by: data
+  - id: archive
+    title: Data retention
+    requirement: >-
+      All recorded and processed site data, including georeferenced GPR transects, site notes, metadata and
+      intermediate processing files, retained for at least six years (12 for contracts under seal).
+    source: tsa
+    filled_by: data

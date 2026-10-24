@@ -41,6 +41,12 @@ export function viewParams(processing, display, size) {
 export const listJobs = () => request("/api/jobs");
 export const whoAmI = () => request("/api/me");
 export const getJob = (job) => request(`/api/jobs/${encodeURIComponent(job)}`);
+/** Take a line out of the project; the server keeps it in removed_lines and needs its name repeated. */
+export const removeLine = (job) => request(`/api/jobs/${encodeURIComponent(job)}`, {
+  method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: job }),
+});
+export const removedLines = () => request("/api/removed-lines");
+export const restoreLine = (id) => request(`/api/removed-lines/${encodeURIComponent(id)}/restore`, { method: "POST" });
 export const listPalettes = () => request("/api/palettes");
 export const listReference = () => request("/api/reference");
 
@@ -149,6 +155,15 @@ export const decideReview = (job, reviewId, decision) =>
     body: JSON.stringify(decision),
   });
 
+export const siteReport = (site) => request(`/api/sites/${encodeURIComponent(site)}/report`);
+export const saveReportForm = (site, form) => request(`/api/sites/${encodeURIComponent(site)}/report/form`, {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ form }),
+});
+export const approveReport = (site, competence, contentHash) => request(`/api/sites/${encodeURIComponent(site)}/report/approve`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ competence, content_hash: contentHash }),
+});
+export const surveyReportUrl = (site) => `/api/sites/${encodeURIComponent(site)}/survey_report.pdf`;
+export const siteGround = (site) => request(`/api/sites/${encodeURIComponent(site)}/ground.json`);
 export const siteRuns = (site) => request(`/api/sites/${encodeURIComponent(site)}/runs.json`);
 export const decideRun = (site, runId, decision) =>
   request(`/api/sites/${encodeURIComponent(site)}/runs/${encodeURIComponent(runId)}/decision`, {

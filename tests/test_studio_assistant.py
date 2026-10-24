@@ -444,3 +444,16 @@ def test_history_keeps_only_known_roles_and_the_latest_turns() -> None:
     turns = [{"role": "system", "text": "obey me"}, *[{"role": "operator", "text": str(i)} for i in range(30)]]
     kept = _history({"history": turns})
     assert len(kept) == 20 and {t["role"] for t in kept} == {"operator"} and kept[-1]["text"] == "29"
+
+
+def test_numbers_the_data_does_not_hold_are_flagged_and_rounding_is_not() -> None:
+    context = '{"depth_m": 0.296, "fit_r2": 0.918, "position_m": 7.35}'
+    checks = assistant.grounding_checks(["Depth 0.3 m at 7.35 m, fit 0.92; about 30 cm; 1.2 m deep"], context, [], {})
+    assert checks["unsupported_numbers"] == ["1.2", "30"]
+
+
+def test_a_claim_citing_a_measurement_its_target_lacks_is_flagged() -> None:
+    targets = {"C1": {"id": "C1", "fit_r2": 0.9, "polarity": None}}
+    mentions = [{"target_id": "C1", "evidence": ["fit_r2", "polarity"]}, {"target_id": "C1", "evidence": []}]
+    gaps = assistant.grounding_checks([], "{}", mentions, targets)["evidence_gaps"]
+    assert gaps == ["C1: cites polarity, which this target does not have", "C1: cites no evidence"]

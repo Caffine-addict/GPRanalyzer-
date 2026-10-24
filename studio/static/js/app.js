@@ -520,8 +520,72 @@ function handleResize() {
 /* ---------- menu bar ---------- */
 
 async function afterLineImported(job) {
+  reviewsPanel.forgetSites(); // which sites exist may have changed
   setState({ jobs: await api.listJobs() });
   await openJob(job);
+}
+
+/* ---------- removing a line (studio/line_trash.py): recoverable, never a delete ---------- */
+
+function confirmRemoveLine(job) {
+  modal.open(
+    el("h3", { text: `Remove ${job}?` }),
+    el("p", { text: "The line leaves the project, the Map, Field mode and the 3D view. Its radar files and everything " +
+      "recorded on it (picks, claims, survey points) are kept together in the removed_lines folder." }),
+    el("p", { text: "You can put it back from File › Removed lines…" }),
+    el("div", { class: "btn-row", style: "padding:0" }, [
+      el("button", { class: "btn ghost", text: "Cancel", onclick: () => modal.close() }),
+      el("button", { class: "btn bad", text: "Remove line", onclick: () => removeLine(job) }),
+    ]),
+  );
+}
+
+async function removeLine(job) {
+  modal.close();
+  try {
+    await api.removeLine(job);
+  } catch (error) {
+    setState({ status: `Could not remove ${job}: ${error.message}` });
+    return;
+  }
+  if (getState().job === job) {
+    setState({ job: null, jobDetail: null, expandedJob: null, channel: null, hyperbola: null, fit: null, measure: null,
+      picks: [], candidates: [], reviews: [], siteRuns: null });
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+  reviewsPanel.forgetSites(); // which sites exist may have changed
+  setState({ jobs: await api.listJobs(), status: `Removed ${job}. Put it back from File › Removed lines…` });
+}
+
+async function showRemovedLines() {
+  const list = el("ul", { class: "export-list" }, [el("li", { class: "panel-note", text: "Loading…" })]);
+  modal.open(el("h3", { text: "Removed lines" }),
+    el("p", { text: "Lines taken out of the project, with everything recorded on them. Restore puts a line back as it was." }),
+    list,
+    el("div", { class: "btn-row", style: "padding:0" }, [el("button", { class: "btn ghost", text: "Close", onclick: () => modal.close() })]));
+  try {
+    const entries = await api.removedLines();
+    replace(list, ...(entries.length ? entries.map((e) => el("li", { class: "row" }, [
+      el("span", { text: `${e.job} · removed by ${e.removed_by} · ${e.removed_at.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2}).*/, "$1-$2-$3 $4:$5")} UTC` }),
+      el("button", { class: "btn", text: "Restore", onclick: () => restoreLine(e) }),
+    ])) : [el("li", { class: "panel-note", text: "No removed lines." })]));
+  } catch (error) {
+    replace(list, el("li", { class: "panel-note warn", text: `Could not list removed lines: ${error.message}` }));
+  }
+}
+
+async function restoreLine(entry) {
+  try {
+    await api.restoreLine(entry.id);
+  } catch (error) {
+    setState({ status: `Could not restore ${entry.job}: ${error.message}` });
+    modal.close();
+    return;
+  }
+  modal.close();
+  reviewsPanel.forgetSites(); // which sites exist may have changed
+  setState({ jobs: await api.listJobs(), status: `Restored ${entry.job}.` });
+  await openJob(entry.job);
 }
 
 /* A readable starting view: dewow, band-pass around the antenna's centre frequency, a windowed
@@ -555,6 +619,14 @@ function installMenus() {
         hint: noLine() ? "Open a line first" : "",
         action: () => window.open(api.picksCsvUrl(getState().job), "_blank"),
       },
+      "-",
+      {
+        label: noLine() ? "Remove line…" : `Remove ${getState().job}…`,
+        disabled: noLine(),
+        hint: noLine() ? "Open a line first" : "",
+        action: () => confirmRemoveLine(getState().job),
+      },
+      { label: "Removed lines…", action: showRemovedLines },
     ],
     process: () => [
       { label: "Raw — no processing", action: () => setState({ processing: { ...DEFAULT_PROCESSING } }) },

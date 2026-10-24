@@ -24,8 +24,14 @@ RULES
     RISE (towards water, concrete) or metal. Do not state it the other way round.
   * A strong amplitude or a good fit alone says nothing about material.
   * A target with "below_usable_depth" true is in noise: do not identify it.
+- For each mention, list in "evidence" the target fields your claim rests on (e.g. ["polarity", "fit_r2"]),
+  using the field names exactly as they appear in the target.
+  Cite only fields that have a value for that target. The Studio checks every citation.
+- Copy every number from CONTEXT exactly as given (rounding is fine). Do not compute new numbers such as
+  differences or unit conversions: each number is checked against the data, and one not found is flagged.
 - Keep "answer" to a few short paragraphs of plain text, each "why" under 25 words, and at most
-  three "next_steps", each a concrete check.
+  three "next_steps", each a concrete check. Put at most 12 targets in "mentions": the ones that matter most
+  for the task; say in "answer" how many others there are and why they were left out.
 
 CONTEXT
 {context}

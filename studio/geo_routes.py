@@ -5,8 +5,10 @@ See docs/GEOSPATIAL_PLAN.md (phases 1-3), reference/sue_geo.py and studio/georef
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import re
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -14,19 +16,24 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response
 
+from detect.expert_checks import penetration_sample
 from reference import sue_geo
-from studio import candidates as candidate_store
 from studio import (
+    assistant_routes,
     dig_map,
     field_reports,
     geo_export,
     georef,
     gps_georef,
+    ground,
     runs,
     session,
     site3d,
     site_map,
+    survey_content,
+    survey_report,
 )
+from studio import candidates as candidate_store
 from studio import picks as pick_store
 from studio import reviews as review_store
 
@@ -264,18 +271,110 @@ def _scene(request: Request, site: str, channel: str, detected: bool) -> dict[st
                         detected=detected)
 
 
+@router.get("/api/sites/{site}/ground.json")
+def site_ground(request: Request, site: str) -> dict[str, Any]:
+    """Each line's measured dielectric and the sections of neighbouring lines that agree (studio/ground.py)."""
+    scene = _scene(request, site, "RAD", detected=False)
+    job_dirs = {job: str(_job(request, job)) for job in site_map.site_jobs(_dataset_dir(request), site)}
+    return {"site": site, **ground.sections(scene, job_dirs)}
+
+
 @router.get("/api/sites/{site}/scene.json")
 def site_scene(request: Request, site: str, channel: str = "RAD", detected: bool = True) -> dict[str, Any]:
     """Every line of a site for the 3D view, placed by the same sources as the Map (studio/site3d.py)."""
     return _scene(request, site, channel, detected)
 
 
-def _run_claims(request: Request, site: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    found = runs.site_runs(_scene(request, site, "RAD", detected=True))
+def _run_claims(request: Request, site: str,
+                scene: dict[str, Any] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    found = runs.site_runs(scene or _scene(request, site, "RAD", detected=True))
     try:
         return found, runs.claims(site, found)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------- the survey report (studio/survey_report.py)
+
+
+def _software(request: Request) -> dict[str, Any]:
+    try:
+        version = importlib.metadata.version("gpr-analyzer")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5,
+                                cwd=Path(__file__).resolve().parent, check=True).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        commit = "unknown"  # a deployed copy without git: say so rather than guess
+    return {"version": version, "commit": commit,
+            "detector": f"{candidate_store.MIGRATION_DETECTOR} v{candidate_store.MIGRATION_DETECTOR_VERSION}",
+            "models": assistant_routes._models(assistant_routes._config(request))}
+
+
+def _report_content(request: Request, site: str) -> dict[str, Any]:
+    if site not in {entry["site"] for entry in list_sites(request)}:
+        raise HTTPException(status_code=404, detail=f"unknown site: {site!r}")
+    scene = _scene(request, site, "RAD", detected=True)
+    found, claims = _run_claims(request, site, scene)
+    job_dirs = {job: _job(request, job) for job in site_map.site_jobs(_dataset_dir(request), site)}
+    lines_meta: dict[str, dict[str, Any]] = {}
+    for job, job_dir in job_dirs.items():
+        try:
+            channels = _channels(job_dir)
+            first = channels.get("RAD") or next(iter(channels.values()))
+            traces = session.raw_traces(session.load_frame(job_dir, first.extension))
+            cut = penetration_sample(traces, first.sample_interval_ns)  # time, not depth: depth needs the line's velocity
+            lines_meta[job] = {"header": session.job_header(job_dir), "channels": [vars(c) for c in channels.values()],
+                               "usable": {"time_ns": None if cut is None else cut * first.sample_interval_ns,
+                                          "window_ns": first.time_window_ns}}
+        except (ValueError, KeyError, StopIteration, session.JobNotFoundError):
+            lines_meta[job] = {"header": {}, "channels": [], "usable": None}
+    return survey_content.build(site, scene, found, claims, ground.sections(scene, {j: str(d) for j, d in job_dirs.items()}),
+                                vendor_collection(request)["features"], lines_meta, _software(request))
+
+
+@router.get("/api/sites/{site}/report")
+def site_report_state(request: Request, site: str) -> dict[str, Any]:
+    """The project form, who prepared it, its approvals, and whether the report as it reads now is approved."""
+    content = _report_content(request, site)
+    state = survey_report.load(site)
+    digest = survey_report.content_hash(content, state)
+    return {**state, "fields": survey_report.FORM_FIELDS, "content_hash": digest,
+            "status": survey_report.status(state, digest)}
+
+
+@router.put("/api/sites/{site}/report/form")
+def save_report_form(request: Request, site: str, payload: dict = Body(...)) -> dict[str, Any]:  # noqa: B008
+    if site not in {entry["site"] for entry in list_sites(request)}:
+        raise HTTPException(status_code=404, detail=f"unknown site: {site!r}")
+    try:
+        return survey_report.save_form(site, payload.get("form"), request.state.user.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/sites/{site}/report/approve")
+def approve_report(request: Request, site: str, payload: dict = Body(...)) -> dict[str, Any]:  # noqa: B008
+    """Approve the report as the approver last saw it: refused if anything changed since (content_hash)."""
+    content = _report_content(request, site)
+    state = survey_report.load(site)
+    digest = survey_report.content_hash(content, state)
+    if payload.get("content_hash") != digest:
+        raise HTTPException(status_code=409, detail="the report changed since you opened it; reload and read it again")
+    try:
+        return survey_report.approve(site, request.state.user.username, str(payload.get("competence", "")), digest)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/sites/{site}/survey_report.pdf")
+def survey_report_pdf(request: Request, site: str) -> Response:
+    content = _report_content(request, site)
+    state = survey_report.load(site)
+    digest = survey_report.content_hash(content, state)
+    return Response(survey_report.pdf(site, content, state, digest), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{_safe_filename(site)}_survey_report.pdf"'})
 
 
 @router.get("/api/sites/{site}/runs.json")
