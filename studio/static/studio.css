@@ -660,12 +660,42 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 .assistant-reply { padding: 4px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
 .assistant-reply .interp-text { margin: 0; font-size: 13px; line-height: 1.6; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Claim chips and inline target ids (panel_assistant.js): colour = material named, fill = confidence. */
 .chip {
-  font-size: 12px; text-align: left; cursor: pointer; padding: 4px 10px;
-  border-radius: 999px; border: 1px solid rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .08); color: var(--tone-amber);
-  transition: background .15s var(--ease), border-color .15s var(--ease);
+  --mat: #71717a;
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12px; text-align: left; cursor: pointer;
+  padding: 3px 9px 3px 3px; border-radius: 999px; color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--mat) 55%, transparent);
+  background: color-mix(in srgb, var(--mat) 12%, transparent);
+  transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
-.chip:hover { border-color: var(--proposed); background: rgba(245, 158, 11, .16); }
+.chip.conf-high { background: color-mix(in srgb, var(--mat) 26%, transparent); border-color: var(--mat); }
+.chip.conf-low { background: transparent; border-style: dashed; }
+.chip-id {
+  font: 600 11px/1 var(--mono); padding: 4px 7px; border-radius: 999px; color: #fff; background: var(--mat);
+}
+.chip.conf-low .chip-id { background: transparent; color: var(--mat); box-shadow: inset 0 0 0 1.5px var(--mat); }
+.chip-conf { font-size: 9px; letter-spacing: 1px; color: var(--mat); }
+.chip:hover, .chip.lit { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mat) 45%, transparent); }
+.ref {
+  --mat: #71717a;
+  font: 600 11px/1.2 var(--mono); padding: 1px 5px; margin: 0 1px; border-radius: 4px; cursor: pointer;
+  vertical-align: 1px; color: #fff; background: var(--mat); border: 1px solid var(--mat);
+}
+.ref.conf-low { color: var(--mat); background: transparent; border-style: dashed; }
+.ref.conf-medium { background: color-mix(in srgb, var(--mat) 80%, transparent); }
+.ref:hover, .ref.lit { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mat) 45%, transparent); }
+.ref.ref-plain { color: var(--text-dim); background: var(--bg-sink); border-color: var(--line); cursor: default; }
+/* After .chip and .ref, which set the grey default: equal specificity, so the later rule wins. */
+.mat-metal   { --mat: #3b82f6; }
+.mat-air     { --mat: #8b5cf6; }
+.mat-water   { --mat: #06b6d4; }
+.mat-void    { --mat: #ec4899; }
+.mat-none, .mat-unknown { --mat: #71717a; }
+.chip-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-faint); }
+.chip-key .key { display: inline-flex; align-items: center; gap: 5px; }
+.chip-key .key i { width: 9px; height: 9px; border-radius: 50%; background: var(--mat); }
+.chip-key .key-conf { letter-spacing: .2px; }
 .steps { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text); display: grid; gap: 4px; }
 .chat-log { max-height: 46vh; overflow-y: auto; padding: 6px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
 .turn.operator {
