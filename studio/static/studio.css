@@ -288,6 +288,11 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 }
 .dock-left { border-right: 1px solid var(--line); }
 .dock-right { border-left: 1px solid var(--line); overflow: hidden; }
+/* Each part keeps its own column: when a dock is hidden (layout toggles, narrow windows), the viewer
+   must not slide into the dock's now-empty column. */
+.workspace > .dock-left { grid-column: 1; }
+.workspace > .viewer { grid-column: 2; }
+.workspace > .dock-right { grid-column: 3; }
 
 /* ---------- left dock: collapsible sections ---------- */
 
@@ -1083,4 +1088,17 @@ select.finput { padding-right: 28px; }
 
 /* theme toggle (menubar) */
 .icon-btn { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+
+/* Layout toggles (js/layout.js): a filled pane = that part is showing, as in an editor. */
+.layout-toggles { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
+.layout-i { fill: none; }
+.layout-i .pane { fill: transparent; stroke: none; transition: fill .15s var(--ease); }
+[data-layout].on .layout-i .pane { fill: currentColor; opacity: .55; }
+[data-layout].on { color: var(--text); }
+body[data-mode="field"] .layout-toggles { display: none; }
+body[data-hide-left] { --dock-w: 0px; }
+body[data-hide-left] .dock-left { display: none; }
+body[data-hide-right] { --dock-right-w: 0px; }
+body[data-hide-right] .dock-right { display: none; }
+body[data-hide-bottom] .ascan-strip { display: none; }
 .verify-link { text-decoration: none; font-size: 12.5px; }

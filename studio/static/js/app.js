@@ -7,6 +7,7 @@
 
 import * as api from "./api.js";
 import * as theme from "./theme.js";
+import * as layout from "./layout.js";
 import * as ascan from "./ascan.js";
 import * as docks from "./docks.js";
 import * as documents from "./documents.js";
@@ -664,6 +665,7 @@ function installMenus() {
 async function boot() {
   modal.init();
   theme.initToggle(document.getElementById("themeToggle"));
+  layout.init();
   window.addEventListener("gpr-theme", () => setState({})); // repaint the canvases in the new colours
   api.whoAmI().then(({ username }) => {
     document.getElementById("accountName").textContent = username;

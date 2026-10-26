@@ -59,6 +59,12 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
   <div class="menubar-right">
     <span class="job-badge" id="jobBadge">no line open</span>
     <a class="menu verify-link" href="/verify" title="Verify the detector's targets to train a learned detector">Verify targets</a>
+    <div class="layout-toggles" role="group" aria-label="Layout">
+      <button class="menu icon-btn" type="button" data-layout="left" title="Show or hide the project tree (⌘/Ctrl+B)" aria-label="Project tree"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="3" y="4.5" width="6.5" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="bottom" title="Show or hide the A-scan strip (⌘/Ctrl+J)" aria-label="A-scan strip"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="3" y="13.5" width="18" height="6" rx="2"/><path d="M3 13.5h18"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="right" title="Show or hide the inspector: Process, Targets, Assistant, Review… (⌘/Ctrl+Alt+B)" aria-label="Inspector"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="14.5" y="4.5" width="6.5" height="15" rx="2"/><path d="M14.5 4.5v15"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="focus" title="Focus: hide all three, or bring them back" aria-label="Focus on the view"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><rect class="pane" x="8" y="8" width="8" height="8" rx="1"/></svg></button>
+    </div>
     <button class="menu icon-btn" id="themeToggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="i"><use href="#i-sun"/></svg></button>
     <form class="account" method="post" action="/logout">
       <span class="account-name" id="accountName" title="Signed in"></span>
