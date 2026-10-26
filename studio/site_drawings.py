@@ -11,6 +11,7 @@ Stored beside the survey data (dataset parent / site_drawings), which is never c
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -29,7 +30,10 @@ SUFFIXES = {".dwg", ".dxf"}
 FLATTEN_DISTANCE = 0.02  # max chord error when arcs and splines become straight segments (drawing units)
 CONVERT_TIMEOUT_S = 180
 _CACHE = ".geometry.json"
-_FORMAT = 2  # bump when what parse() returns changes, so cached geometry is rebuilt
+_FORMAT = 3  # bump when what parse() returns changes, so cached geometry is rebuilt
+LABEL_REACH = 1.5  # drawing units: how close a leader end must be to its label
+LINE_REACH = 0.6  # ...and its other end to the utility line it points at
+JOIN_REACH = 0.05  # line pieces whose ends are this close are one drawn utility
 _TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 _UTILITY_WORDS = re.compile(r"cable|pipe|drain|water|fire|hydrant|sewer|sewage|telecom|ofc|gas|earth|metallic|"
                             r"utility|chamber|duct|line|trench|power|electric", re.IGNORECASE)
@@ -180,15 +184,19 @@ def join_segments(polylines: list[list[list[float]]]) -> list[list[list[float]]]
 
 
 def _entities(space: Any) -> Any:
-    """Every primitive, with blocks, dimensions and leaders opened up into what they draw."""
+    """(primitive, is_annotation) for everything drawn, with blocks, dimensions and leaders opened up.
+
+    Annotation (a dimension's lines, a leader's arrow) is drawn like everything else, but is never
+    a utility, even when it sits on a utility's layer as leaders here do.
+    """
     for entity in disassemble.recursive_decompose(space):
         if entity.dxftype() in ("DIMENSION", "LEADER", "MULTILEADER", "ACAD_TABLE"):
             try:
-                yield from getattr(entity, "virtual_entities")()  # noqa: B009 - not on DXFEntity's type
+                yield from ((v, True) for v in getattr(entity, "virtual_entities")())  # noqa: B009
             except (TypeError, ValueError, AttributeError):
                 continue
         else:
-            yield entity
+            yield entity, False
 
 
 def parse(dxf_path: Path) -> dict[str, Any]:
@@ -199,7 +207,13 @@ def parse(dxf_path: Path) -> dict[str, Any]:
         layer_colour[layer.dxf.name] = _hex(rgb)
     lines: dict[str, list[list[list[float]]]] = {}
     texts: list[dict[str, Any]] = []
-    for entity in _entities(doc.modelspace()):
+    leaders: list[tuple[str, tuple[float, float], tuple[float, float]]] = []
+    for leader in doc.modelspace().query("LEADER"):
+        vertices = getattr(leader, "vertices", [])  # LEADER's own attribute, not on DXFEntity's type
+        if len(vertices) >= 2:
+            leaders.append((leader.dxf.layer, (vertices[0][0], vertices[0][1]), (vertices[-1][0], vertices[-1][1])))
+    annotation: dict[str, list[list[list[float]]]] = {}
+    for entity, is_annotation in _entities(doc.modelspace()):
         layer = entity.dxf.get("layer", "0")
         if entity.dxftype() in ("TEXT", "MTEXT", "ATTRIB"):
             value = _text(entity)
@@ -212,8 +226,11 @@ def parse(dxf_path: Path) -> dict[str, Any]:
                           "height": round(float(height), 3), "rotation": round(float(rotation), 1),
                           "ax": ax, "ay": ay, "utility": utility_label(value.replace("\n", " "))})
         else:
-            lines.setdefault(layer, []).extend(_lines(entity))
+            (annotation if is_annotation else lines).setdefault(layer, []).extend(_lines(entity))
     lines = {layer: join_segments(polylines) for layer, polylines in lines.items()}
+    depths = depth_lines(lines, texts, leaders)  # before annotation joins the drawing: arrows are not utilities
+    for name, polylines in annotation.items():
+        lines.setdefault(name, []).extend(join_segments(polylines))
     xs = [p[0] for polylines in lines.values() for line in polylines for p in line]
     ys = [p[1] for polylines in lines.values() for line in polylines for p in line]
     labelled = {t["layer"] for t in texts if t["utility"]}
@@ -229,7 +246,94 @@ def parse(dxf_path: Path) -> dict[str, Any]:
         "units_declared": units.get(doc.header.get("$INSUNITS", 0), f"code {doc.header.get('$INSUNITS')}"),
         "layers": layers, "lines": lines, "texts": texts,
         "utilities": [t for t in texts if t["utility"]],
+        "depths": depths,
     }
+
+
+def _segment_distance(p: tuple[float, float], a: list[float], b: list[float]) -> float:
+    ax, ay, bx, by = a[0], a[1], b[0], b[1]
+    dx, dy = bx - ax, by - ay
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy)))
+    return float(((p[0] - ax - t * dx) ** 2 + (p[1] - ay - t * dy) ** 2) ** 0.5)
+
+
+def _label_box(t: dict[str, Any]) -> tuple[float, float, float, float]:
+    """A label's rough extent (x0, y0, x1, y1), from its anchor, size and line count; rotation ignored."""
+    rows = t["text"].split("\n")
+    width = max(len(r) for r in rows) * 0.6 * t["height"]
+    height = len(rows) * 1.25 * t["height"]
+    x0, y_top = t["x"] - t["ax"] * width, t["y"] + t["ay"] * height
+    return x0, y_top - height, x0 + width, y_top
+
+
+def _box_distance(p: tuple[float, float], box: tuple[float, float, float, float]) -> float:
+    dx = max(box[0] - p[0], 0.0, p[0] - box[2])
+    dy = max(box[1] - p[1], 0.0, p[1] - box[3])
+    return float((dx * dx + dy * dy) ** 0.5)
+
+
+def depth_lines(lines: dict[str, list[list[list[float]]]], texts: list[dict[str, Any]],
+                leaders: list[tuple[str, tuple[float, float], tuple[float, float]]]) -> dict[str, Any]:
+    """Utility lines at the depths their labels state, joined by the drawing's own leader arrows.
+
+    A leader whose one end is at a utility label (same layer) and whose other end is on a line of
+    that layer gives the line that label's depth at that point. Along a line with several labels,
+    each vertex takes the depth of its nearest label point. A line no leader reaches has no depth:
+    it is returned separately, never given one.
+    """
+    labels = [t for t in texts if t["utility"] and t["utility"]["depth_m"] is not None]
+    points: dict[tuple[str, int], list[tuple[tuple[float, float], dict[str, Any]]]] = {}
+    for layer, a, b in leaders:
+        mine = [t for t in labels if t["layer"] == layer]
+        best = min(((_box_distance(end, _label_box(t)), end, other, t) for t in mine for end, other in ((a, b), (b, a))),
+                   key=lambda item: item[0], default=None)
+        if best is None or best[0] > LABEL_REACH:
+            continue
+        _, _, tip, label = best
+        reach = [(min(_segment_distance(tip, u, v) for u, v in itertools.pairwise(line)), i)
+                 for i, line in enumerate(lines.get(layer, [])) if len(line) >= 2]
+        if not reach:
+            continue
+        gap, index = min(reach)
+        if gap <= LINE_REACH:
+            points.setdefault((layer, index), []).append((tip, label))
+    # A utility drawn as several touching pieces is one line: the depth a leader gives one piece carries,
+    # piece by piece, to the pieces joined to it end to end on the same layer.
+    carried: dict[tuple[str, int], list[tuple[tuple[float, float], dict[str, Any]]]] = {}
+    for layer in {layer for layer, _ in points}:
+        polylines = lines.get(layer, [])
+        ends = [(tuple(line[0]), tuple(line[-1])) for line in polylines]
+        frontier = [i for (lay, i) in points if lay == layer]
+        seen = set(frontier)
+        while frontier:
+            i = frontier.pop()
+            source = points.get((layer, i)) or carried[(layer, i)]
+            for j, (start, end) in enumerate(ends):
+                if j in seen:
+                    continue
+                if any(((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2) ** 0.5 <= JOIN_REACH for p in ends[i] for q in (start, end)):
+                    seen.add(j)
+                    carried[(layer, j)] = source
+                    frontier.append(j)
+    labelled_layers = {t["layer"] for t in labels}
+    placed, unplaced = [], []
+    for layer, polylines in lines.items():
+        for i, line in enumerate(polylines):
+            found = points.get((layer, i)) or carried.get((layer, i))
+            if not found:
+                if layer in labelled_layers:  # a utility layer whose depths are given elsewhere, not here
+                    unplaced.append({"layer": layer, "points": line})
+                continue
+            out = []
+            for x, y in line:
+                _, label = min(found, key=lambda f: (f[0][0] - x) ** 2 + (f[0][1] - y) ** 2)
+                out.append([x, y, label["utility"]["depth_m"]])
+            placed.append({"layer": layer, "points": out, "carried": (layer, i) not in points,
+                           "labels": [] if (layer, i) not in points else [{"x": tip[0], "y": tip[1], "depth_m": label["utility"]["depth_m"],
+                                       "kind": label["utility"]["kind"], "quality_level": label["utility"]["quality_level"],
+                                       "diameter_mm": label["utility"]["diameter_mm"]} for tip, label in found]})
+    return {"placed": placed, "unplaced": unplaced, "leader_links": sum(len(v) for v in points.values()),
+            "labels_with_depth": len(labels)}
 
 
 def geometry(dataset_dir: Path, name: str) -> dict[str, Any]:

@@ -159,6 +159,10 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
 
     <div class="drawing-view" id="drawingView" hidden>
       <div id="drawingMap"></div>
+      <div class="drawing3d" id="drawing3d" hidden>
+        <canvas id="drawing3dCanvas" aria-label="The drawing's utilities in 3D at their labelled depths"></canvas>
+        <div class="scene-labels" id="drawing3dLabels"></div>
+      </div>
       <aside class="scene-panel" id="drawingPanel"></aside>
     </div>
 

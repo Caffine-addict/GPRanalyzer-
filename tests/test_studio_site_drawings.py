@@ -62,3 +62,15 @@ def test_import_takes_only_cad_files_never_overwrites_and_finds_by_listing(tmp_p
     assert site_drawings.geometry(dataset, "Site A")["utilities"]
     with pytest.raises(FileNotFoundError):
         site_drawings.path_of(dataset, "../../etc/passwd")
+
+
+def test_a_label_s_depth_reaches_only_the_line_its_leader_points_at() -> None:
+    lines = {"Pipe": [[[0.0, 0.0], [10.0, 0.0]], [[10.0, 0.0], [20.0, 0.0]], [[0.0, 5.0], [10.0, 5.0]]]}
+    label = {"layer": "Pipe", "x": 3.0, "y": 3.0, "text": "Drain Pipe\nD : ~ 0.50 m\nQL-A", "height": 0.4, "ax": 0.0,
+             "ay": 0.0, "utility": {"kind": "Drain Pipe", "depth_m": 0.5, "quality_level": "QL-A", "diameter_mm": None}}
+    leaders = [("Pipe", (3.2, 2.9), (4.0, 0.0))]  # from just under the label to the first pipe
+    found = site_drawings.depth_lines(lines, [label], leaders)
+    by_start = {tuple(p["points"][0][:2]): p for p in found["placed"]}
+    assert by_start[(0.0, 0.0)]["points"][0][2] == 0.5 and not by_start[(0.0, 0.0)]["carried"]
+    assert by_start[(10.0, 0.0)]["carried"]  # joined end to end: the same drawn pipe
+    assert [u["points"][0] for u in found["unplaced"]] == [[0.0, 5.0]]  # no leader reaches it: no depth given

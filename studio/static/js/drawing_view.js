@@ -11,6 +11,7 @@
 import * as api from "./api.js";
 import { el, replace } from "./dom.js";
 import { token } from "./theme.js";
+import * as drawing3d from "./drawing3d.js";
 
 const MIN_TEXT_PX = 6; // a label smaller than this on screen is noise, so it is hidden until zoomed in
 const CAP_HEIGHT = 0.72; // capital height as a share of the font size, for the narrow sans-serif used
@@ -25,11 +26,12 @@ let drawings = [];
 let current = "";
 let data = null;
 let note = "";
+let mode = "plan"; // "plan" (as drawn) or "3d" (utilities at their labelled depths)
 const groups = new Map(); // layer name -> { lines: L.Polyline | null, texts: L.Marker[], on: boolean }
 
 export async function show(on) {
   dom.root.hidden = !on;
-  if (!on) return;
+  if (!on) { drawing3d.show(false); return; }
   ensureMap();
   map.invalidateSize();
   try {
@@ -59,6 +61,7 @@ async function load() {
     note = "";
     fitAll(); // the view first: Leaflet holds markers back until the map has one
     build();
+    if (mode === "3d") setMode("3d");
   } catch (error) {
     data = null;
     renderPanel(`Could not open ${current}: ${error.message}`);
@@ -155,6 +158,38 @@ function zoomTo(t) {
   if (marker) { setLayer(t.layer, true); renderPanel(); marker.openPopup(); }
 }
 
+function setMode(next) {
+  mode = next;
+  document.getElementById("drawingMap").style.visibility = mode === "3d" ? "hidden" : "";
+  drawing3d.show(mode === "3d" && Boolean(data), data, colourOf);
+  if (mode === "plan") map.invalidateSize();
+  renderPanel();
+}
+
+function threeDPanel() {
+  const d = data.depths;
+  const labelled = d.placed.filter((l) => !l.carried).length;
+  const carried = d.placed.length - labelled;
+  const check = (label, key) => el("label", { class: "check" }, [
+    el("input", { type: "checkbox", checked: drawing3d.options[key], onchange: (e) => drawing3d.set(key, e.target.checked) }),
+    el("span", { text: label })]);
+  const value = el("output", { text: `×${drawing3d.options.exaggeration}` });
+  return [
+    el("div", { class: "row" }, [el("span", { text: "Depth ×" }),
+      el("input", { type: "range", min: 1, max: 30, step: 1, value: drawing3d.options.exaggeration, "aria-label": "Depth exaggeration",
+        onchange: (e) => { value.textContent = `×${e.target.value}`; drawing3d.set("exaggeration", Number(e.target.value)); } }), value]),
+    el("div", { class: "row" }, [el("button", { class: "btn ghost", text: "Reset view", onclick: () => drawing3d.fit() })]),
+    check("Site plan on the ground", "background"),
+    check("Utilities with no stated depth (dashed, at the surface)", "unknown"),
+    check("Depth tags", "tags"),
+    el("p", { class: "note", text: `${d.placed.length} utility lines are at the depth their label states: ${labelled} reached by a `
+      + `label's arrow, ${carried} joined end to end to one. ${d.unplaced.length} pieces on the same layers have no depth `
+      + "anywhere on the drawing: they stay dashed at the surface, not sunk to a guess." }),
+    el("p", { class: "note", text: "Tags read depth to the top of the utility from ground level, as labelled; QL-A was exposed and "
+      + "verified by the surveyor. Drag to orbit, right-drag to pan, scroll to zoom." }),
+  ];
+}
+
 /* ---------- panel ---------- */
 
 function layerRow(layer) {
@@ -203,7 +238,12 @@ function renderPanel(message) {
     byKind.set(key, [...(byKind.get(key) ?? []), t]);
   }
   const levels = data.utilities.reduce((acc, t) => ({ ...acc, [t.utility.quality_level]: (acc[t.utility.quality_level] ?? 0) + 1 }), {});
-  replace(dom.panel, ...head,
+  const switcher = el("div", { class: "seg dwg-mode" }, [
+    el("button", { class: `tool${mode === "plan" ? " active" : ""}`, text: "Plan", onclick: () => setMode("plan") }),
+    el("button", { class: `tool${mode === "3d" ? " active" : ""}`, text: "3D", onclick: () => setMode("3d") }),
+  ]);
+  if (mode === "3d") return replace(dom.panel, ...head, switcher, ...threeDPanel());
+  replace(dom.panel, ...head, switcher,
     el("div", { class: "row" }, [
       el("button", { class: "btn ghost", text: "Fit whole drawing", onclick: fitAll }),
       el("span", { class: "muted", text: `${(x1 - x0).toFixed(0)} × ${(y1 - y0).toFixed(0)} drawing units` }),
