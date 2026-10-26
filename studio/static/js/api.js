@@ -126,6 +126,10 @@ function formWith(files, fields = {}) {
   return form;
 }
 
+export const listDrawings = () => request("/api/drawings");
+export const drawingGeometry = (name) => request(`/api/drawings/${encodeURIComponent(name)}/geometry.json`);
+export const importDrawings = (files) => request("/api/drawings", { method: "POST", body: formWith(files) });
+
 export const importLine = (job, files) =>
   request("/api/import/line", { method: "POST", body: formWith(files, { job }) });
 export const importReferences = (files) =>

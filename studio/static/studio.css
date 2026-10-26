@@ -762,6 +762,21 @@ a.btn { text-decoration: none; }
 /* ---------- map view ---------- */
 .canvas-wrap[hidden], .ascan-strip[hidden] { display: none; }
 .map-view { position: relative; flex: 1; min-height: 0; }
+/* ---------- Drawing view (CAD utility maps) ---------- */
+.drawing-view { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.drawing-view[hidden] { display: none; }
+#drawingMap { position: absolute; inset: 0; background: var(--bg-sink); z-index: 0; } /* keeps Leaflet's panes below the panel */
+#drawingPanel { z-index: 1000; }
+.dwg-anchor { background: none; border: 0; }
+.dwg-text { position: absolute; left: 0; top: 0; white-space: pre; line-height: 1.25; transform-origin: 0 0;
+  font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; pointer-events: none; }
+.dwg-text.dwg-utility { pointer-events: auto; cursor: pointer; font-weight: 600; }
+.dwg-text.dwg-utility:hover { text-decoration: underline; }
+.dwg-popup { display: grid; gap: 3px; font-size: 12px; }
+.dwg-popup .muted { color: #71717a; font-size: 11px; }
+.dwg-layer { font-size: 11.5px; }
+.dwg-layer .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
 /* ---------- 3D site view ---------- */
 .scene-view { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-sink); }
 .scene-view[hidden] { display: none; }

@@ -27,6 +27,7 @@ import * as targets from "./panel_targets.js";
 import * as velocityPanel from "./panel_velocity.js";
 import * as view from "./view.js";
 import * as view3d from "./view3d.js";
+import * as drawingView from "./drawing_view.js";
 import { DEFAULT_PROCESSING, activeChannel, activeVelocity, getState, setState, subscribe } from "./state.js";
 import { el, replace } from "./dom.js";
 
@@ -459,16 +460,18 @@ function render() {
 function setView(name) {
   const onMap = name === "map";
   const on3d = name === "3d";
+  const onDrawing = name === "drawing";
   for (const button of document.querySelectorAll("#viewToggle .tool")) {
     button.classList.toggle("active", button.dataset.view === name);
   }
-  document.getElementById("canvasWrap").hidden = onMap || on3d;
-  document.querySelector(".ascan-strip").hidden = onMap || on3d;
+  document.getElementById("canvasWrap").hidden = onMap || on3d || onDrawing;
+  document.querySelector(".ascan-strip").hidden = onMap || on3d || onDrawing;
+  drawingView.show(onDrawing);
   mapView.show(onMap, getState().job);
   const { job, channel } = getState();
   view3d.show(on3d, { ...sceneSettings(getState()), site: job?.includes("_") ? job.split("_")[0] : null, channel: channel ?? "RAD" });
   if (onMap) docks.showTab("map");
-  else if (!on3d) handleResize();
+  else if (!on3d && !onDrawing) handleResize();
 }
 
 /* What the 3D curtains share with the 2D view, so both show the same processed signal and depths. */

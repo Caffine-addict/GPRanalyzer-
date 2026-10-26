@@ -20,9 +20,12 @@ it. At ~386 x 256 samples per line that costs single-digit milliseconds.
 from __future__ import annotations
 
 import csv
+import gzip
 import io
+import json
 import math
 import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -33,6 +36,7 @@ from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from core.config import Config, load_config
 from evidence.quality import quality_level
@@ -48,6 +52,7 @@ from studio import (
     line_trash,
     render,
     session,
+    site_drawings,
     velocity,
     verify,
 )
@@ -769,6 +774,39 @@ async def import_references(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"files": stored}
+
+
+@app.get("/api/drawings")
+def list_site_drawings(request: Request) -> list[dict]:
+    return site_drawings.listing(_dataset_dir(request))
+
+
+@app.post("/api/drawings")
+async def import_site_drawings(
+    request: Request,
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency-injection pattern
+) -> dict:
+    """CAD utility maps (.dwg converted by LibreDWG, or .dxf), shown in the Drawing view (studio/site_drawings.py)."""
+    stored = []
+    for name, data in await _read_all(files):
+        try:
+            stored.append(await run_in_threadpool(site_drawings.import_drawing, _dataset_dir(request), name, data))
+        except (ValueError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"drawings": stored}
+
+
+@app.get("/api/drawings/{name}/geometry.json")
+def site_drawing_geometry(request: Request, name: str) -> Response:
+    try:
+        found = site_drawings.geometry(_dataset_dir(request), name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"no drawing named {name!r}") from exc
+    body = json.dumps(found, separators=(",", ":")).encode()
+    headers = {"Cache-Control": "private, max-age=60", "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):  # ~4 MB of coordinates; about 0.5 MB compressed
+        return Response(gzip.compress(body), media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(body, media_type="application/json", headers=headers)
 
 
 @app.get("/api/import/references")
