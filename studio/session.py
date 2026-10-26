@@ -53,9 +53,9 @@ DEFAULT_DATASET_DIR = Path("Dataset/DSU_GPR_Files")
 # them: a longer interval buys a deeper time window at coarser resolution.
 # Other manufacturers' files hold one channel each and follow them.
 CHANNEL_ORDER: tuple[tuple[str, str], ...] = (
-    ("RAD", "Ch 0 — shallow"),
-    ("RA1", "Ch 1 — mid"),
-    ("RA2", "Ch 2 — deep"),
+    ("RAD", "RAD · shallow"),  # the file extension leads: the toolbar and the files name channels by it
+    ("RA1", "RA1 · mid"),
+    ("RA2", "RA2 · deep"),
     ("DZT", "GSSI"),
     ("RD3", "MALÅ"),
     ("RD7", "MALÅ (32-bit)"),
@@ -89,6 +89,7 @@ class ChannelInfo:
     line_length_m: float
     time_window_ns: float
     max_depth_m: float | None  # None when no dielectric is recorded — never a guessed default
+    antenna_freq_mhz: float | None = None  # the header's centre frequency; None when it records none
 
 
 def list_jobs(dataset_dir: Path = DEFAULT_DATASET_DIR) -> list[str]:
@@ -224,6 +225,7 @@ def describe_channel(frame: ScanFrame, extension: str) -> ChannelInfo:
         line_length_m=n_traces * spacing,
         time_window_ns=time_window_ns,
         max_depth_m=max_depth_m,
+        antenna_freq_mhz=frame.antenna_freq_mhz,
     )
 
 

@@ -129,14 +129,24 @@ def review_report_pdf(job: str, info: ChannelInfo, rgb: np.ndarray, reviews: Seq
 
 def briefing_pdf(reply: dict[str, Any]) -> bytes:
     """The last survey briefing, with the exact context the model was given as an appendix."""
+    provenance = reply.get("provenance") or {}
     story: list[Any] = [_p("Survey briefing", _styles["Title"]),
-                        _p(f"Written by {reply.get('model') or 'no model'} · generated {_now()}"),
+                        _p(f"Written by {reply.get('model') or 'no model'} · prompt {provenance.get('prompt_version', 'unknown')}"
+                           f" · reply generated {provenance.get('generated_at', 'unknown')} · input "
+                           f"{provenance.get('input_fingerprint', 'unknown')} · PDF made {_now()} · not checked by a person"),
                         Spacer(1, 4),
                         _p("A language model's summary of the measured and extracted data listed in the appendix. "
                            "It adds no measurements of its own.", _WARN),
                         Spacer(1, 6)]
     if reply.get("error"):
         story.append(_p(f"No briefing: {reply['error']}"))
+    checks = reply.get("checks") or {}
+    if checks.get("unsupported_numbers") or checks.get("evidence_gaps"):
+        story += [_p("Check before relying on this briefing: "
+                     + (f"numbers not in the data given to the model (it may have counted or calculated them itself): {', '.join(checks['unsupported_numbers'])}. "
+                        if checks.get("unsupported_numbers") else "")
+                     + (f"citations that do not hold: {'; '.join(checks['evidence_gaps'])}."
+                        if checks.get("evidence_gaps") else ""), _WARN), Spacer(1, 4)]
     for paragraph in str(reply.get("answer", "")).split("\n\n"):
         if paragraph.strip():
             story += [_p(paragraph.strip()), Spacer(1, 4)]

@@ -35,3 +35,11 @@ def _studio_signed_in(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
         from studio import server
 
         monkeypatch.setattr(server.app.state, "auth", _SignedIn(), raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _audit_archive_in_tmp(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model replies are archived for the audit trail; a test's stand-in replies must never land there."""
+    from studio import assistant_routes
+
+    monkeypatch.setattr(assistant_routes, "_AUDIT_ROOT", tmp_path_factory.mktemp("audit"))

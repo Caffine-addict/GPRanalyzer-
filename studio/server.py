@@ -20,9 +20,12 @@ it. At ~386 x 256 samples per line that costs single-digit milliseconds.
 from __future__ import annotations
 
 import csv
+import gzip
 import io
+import json
 import math
 import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -33,6 +36,7 @@ from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from core.config import Config, load_config
 from evidence.quality import quality_level
@@ -45,8 +49,10 @@ from studio import (
     geo_routes,
     imports,
     interpret,
+    line_trash,
     render,
     session,
+    site_drawings,
     velocity,
     verify,
 )
@@ -194,6 +200,31 @@ def list_jobs(request: Request) -> list[str]:
     return session.list_jobs(_dataset_dir(request))
 
 
+@app.delete("/api/jobs/{job_name}")
+def remove_line(request: Request, job_name: str, payload: dict = Body(...)) -> dict:  # noqa: B008
+    """Take a line out of the project, recoverably (studio/line_trash.py). The body must repeat the
+    line's name, so no stray request removes one by accident."""
+    _job(request, job_name)
+    if payload.get("confirm") != job_name:
+        raise HTTPException(status_code=422, detail="to remove a line, confirm with its exact name")
+    return line_trash.remove(_dataset_dir(request), job_name, request.state.user.username)
+
+
+@app.get("/api/removed-lines")
+def removed_lines(request: Request) -> list[dict]:
+    return line_trash.removed(_dataset_dir(request))
+
+
+@app.post("/api/removed-lines/{entry_id}/restore")
+def restore_line(request: Request, entry_id: str) -> dict:
+    try:
+        return line_trash.restore(_dataset_dir(request), entry_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no removed line {entry_id!r}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/jobs/{job_name}")
 def job_detail(request: Request, job_name: str) -> dict:
     """Everything the client needs to lay out a job: channels, axes, GPS, header."""
@@ -307,6 +338,23 @@ def channel_trace(request: Request, job_name: str, extension: str, index: int = 
         "sample_interval_ns": info.sample_interval_ns,
         "samples": samples,
     }
+
+
+@app.get("/api/jobs/{job_name}/channels/{extension}/samples.f32")
+def channel_samples(request: Request, job_name: str, extension: str) -> Response:
+    """The whole processed line as little-endian float32, one trace after another.
+
+    One fetch per line and processing chain: the A-scan and the status bar's amplitude then read
+    the trace under the cursor locally, on the same frame as X/T/Z, instead of a request per trace.
+    """
+    processing, _settings = _split_query(dict(request.query_params))
+    processed, _info, _chain = _processed(_job(request, job_name), extension, processing)
+    n_samples, n_traces = processed.shape
+    return Response(
+        content=np.ascontiguousarray(processed.T, dtype="<f4").tobytes(),
+        media_type="application/octet-stream",
+        headers={"X-Traces": str(n_traces), "X-Samples": str(n_samples), "Cache-Control": "private, max-age=300"},
+    )
 
 
 @app.post("/api/jobs/{job_name}/channels/{extension}/fit")
@@ -726,6 +774,39 @@ async def import_references(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"files": stored}
+
+
+@app.get("/api/drawings")
+def list_site_drawings(request: Request) -> list[dict]:
+    return site_drawings.listing(_dataset_dir(request))
+
+
+@app.post("/api/drawings")
+async def import_site_drawings(
+    request: Request,
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency-injection pattern
+) -> dict:
+    """CAD utility maps (.dwg converted by LibreDWG, or .dxf), shown in the Drawing view (studio/site_drawings.py)."""
+    stored = []
+    for name, data in await _read_all(files):
+        try:
+            stored.append(await run_in_threadpool(site_drawings.import_drawing, _dataset_dir(request), name, data))
+        except (ValueError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"drawings": stored}
+
+
+@app.get("/api/drawings/{name}/geometry.json")
+def site_drawing_geometry(request: Request, name: str) -> Response:
+    try:
+        found = site_drawings.geometry(_dataset_dir(request), name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"no drawing named {name!r}") from exc
+    body = json.dumps(found, separators=(",", ":")).encode()
+    headers = {"Cache-Control": "private, max-age=60", "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):  # ~4 MB of coordinates; about 0.5 MB compressed
+        return Response(gzip.compress(body), media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(body, media_type="application/json", headers=headers)
 
 
 @app.get("/api/import/references")

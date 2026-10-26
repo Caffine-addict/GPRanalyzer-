@@ -288,6 +288,11 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 }
 .dock-left { border-right: 1px solid var(--line); }
 .dock-right { border-left: 1px solid var(--line); overflow: hidden; }
+/* Each part keeps its own column: when a dock is hidden (layout toggles, narrow windows), the viewer
+   must not slide into the dock's now-empty column. */
+.workspace > .dock-left { grid-column: 1; }
+.workspace > .viewer { grid-column: 2; }
+.workspace > .dock-right { grid-column: 3; }
 
 /* ---------- left dock: collapsible sections ---------- */
 
@@ -312,6 +317,7 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 .accordion.grow .accordion-body { flex: 1; min-height: 0; overflow-y: auto; }
 
 .panel-note { margin: 0; padding: 4px 14px 10px; font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+.panel-note.warn { color: var(--warn); }
 
 .hint {
   width: 16px; height: 16px; border-radius: 50%;
@@ -659,12 +665,42 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 .assistant-reply { padding: 4px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
 .assistant-reply .interp-text { margin: 0; font-size: 13px; line-height: 1.6; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Claim chips and inline target ids (panel_assistant.js): colour = material named, fill = confidence. */
 .chip {
-  font-size: 12px; text-align: left; cursor: pointer; padding: 4px 10px;
-  border-radius: 999px; border: 1px solid rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .08); color: var(--tone-amber);
-  transition: background .15s var(--ease), border-color .15s var(--ease);
+  --mat: #71717a;
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12px; text-align: left; cursor: pointer;
+  padding: 3px 9px 3px 3px; border-radius: 999px; color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--mat) 55%, transparent);
+  background: color-mix(in srgb, var(--mat) 12%, transparent);
+  transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
-.chip:hover { border-color: var(--proposed); background: rgba(245, 158, 11, .16); }
+.chip.conf-high { background: color-mix(in srgb, var(--mat) 26%, transparent); border-color: var(--mat); }
+.chip.conf-low { background: transparent; border-style: dashed; }
+.chip-id {
+  font: 600 11px/1 var(--mono); padding: 4px 7px; border-radius: 999px; color: #fff; background: var(--mat);
+}
+.chip.conf-low .chip-id { background: transparent; color: var(--mat); box-shadow: inset 0 0 0 1.5px var(--mat); }
+.chip-conf { font-size: 9px; letter-spacing: 1px; color: var(--mat); }
+.chip:hover, .chip.lit { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mat) 45%, transparent); }
+.ref {
+  --mat: #71717a;
+  font: 600 11px/1.2 var(--mono); padding: 1px 5px; margin: 0 1px; border-radius: 4px; cursor: pointer;
+  vertical-align: 1px; color: #fff; background: var(--mat); border: 1px solid var(--mat);
+}
+.ref.conf-low { color: var(--mat); background: transparent; border-style: dashed; }
+.ref.conf-medium { background: color-mix(in srgb, var(--mat) 80%, transparent); }
+.ref:hover, .ref.lit { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mat) 45%, transparent); }
+.ref.ref-plain { color: var(--text-dim); background: var(--bg-sink); border-color: var(--line); cursor: default; }
+/* After .chip and .ref, which set the grey default: equal specificity, so the later rule wins. */
+.mat-metal   { --mat: #3b82f6; }
+.mat-air     { --mat: #8b5cf6; }
+.mat-water   { --mat: #06b6d4; }
+.mat-void    { --mat: #ec4899; }
+.mat-none, .mat-unknown { --mat: #71717a; }
+.chip-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-faint); }
+.chip-key .key { display: inline-flex; align-items: center; gap: 5px; }
+.chip-key .key i { width: 9px; height: 9px; border-radius: 50%; background: var(--mat); }
+.chip-key .key-conf { letter-spacing: .2px; }
 .steps { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text); display: grid; gap: 4px; }
 .chat-log { max-height: 46vh; overflow-y: auto; padding: 6px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
 .turn.operator {
@@ -682,6 +718,9 @@ input[type="checkbox"]:checked::after { transform: rotate(-45deg) scale(1); }
 /* ---------- supervisor review ---------- */
 
 .review-list { list-style: none; margin: 0; padding: 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.runs-section { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.runs-section > .interp-label, .runs-section > .panel-note, .runs-section > .empty { padding-left: 14px; padding-right: 14px; }
+.run-links { margin: 0; padding: 0 0 0 16px; font-family: var(--mono); font-size: 10.5px; }
 .review {
   border: 1px solid var(--line); border-radius: 7px;
   padding: 10px 12px; background: var(--bg-sink); cursor: pointer;
@@ -728,6 +767,63 @@ a.btn { text-decoration: none; }
 /* ---------- map view ---------- */
 .canvas-wrap[hidden], .ascan-strip[hidden] { display: none; }
 .map-view { position: relative; flex: 1; min-height: 0; }
+/* ---------- Drawing view (CAD utility maps) ---------- */
+.drawing-view { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.drawing-view[hidden] { display: none; }
+#drawingMap { position: absolute; inset: 0; background: var(--bg-sink); z-index: 0; } /* keeps Leaflet's panes below the panel */
+#drawingPanel { z-index: 1000; }
+.dwg-anchor { background: none; border: 0; }
+.dwg-text { position: absolute; left: 0; top: 0; white-space: pre; line-height: 1.25; transform-origin: 0 0;
+  font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; pointer-events: none; }
+.dwg-text.dwg-utility { pointer-events: auto; cursor: pointer; font-weight: 600; }
+.dwg-text.dwg-utility:hover { text-decoration: underline; }
+.dwg-popup { display: grid; gap: 3px; font-size: 12px; }
+.dwg-popup .muted { color: #71717a; font-size: 11px; }
+.dwg-layer { font-size: 11.5px; }
+.dwg-mode { align-self: flex-start; }
+.drawing3d { position: absolute; inset: 0; z-index: 1; background: var(--bg-sink); }
+.drawing3d[hidden] { display: none; }
+#drawing3dCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.d3-tag { position: absolute; white-space: nowrap; font: 600 10.5px/1.2 var(--mono); color: var(--text);
+  background: var(--overlay); border: 1px solid var(--line-strong); border-left-width: 3px; border-radius: 3px; padding: 1px 5px; }
+.d3-tag.verified::after { content: " ✓"; color: var(--confirmed, #22c55e); }
+.d3-tick { position: absolute; font: 10px var(--mono); color: var(--text-faint); white-space: nowrap; }
+.dwg-layer .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+/* ---------- 3D site view ---------- */
+.scene-view { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-sink); }
+.scene-view[hidden] { display: none; }
+#scene3d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scene-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.scene-label { position: absolute; transform: translate(-50%, -120%); white-space: nowrap; font: 500 10.5px/1.3 var(--mono);
+  color: var(--text-dim); background: var(--overlay); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.scene-label.warn { color: var(--warn); border-color: var(--warn); }
+.scene-label.tick { transform: translate(6px, -50%); background: transparent; border: 0; padding: 0; color: var(--text-faint); }
+.scene-compass { position: absolute; left: 14px; bottom: 14px; z-index: 2; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--overlay); border: 1px solid var(--line-strong); display: grid; place-items: center; pointer-events: none; }
+.scene-compass span { display: grid; justify-items: center; line-height: 1; font-size: 10px; color: var(--accent-strong); }
+.scene-compass b { font: 600 10px/1 var(--mono); color: var(--text); }
+.scene-tip { position: absolute; z-index: 3; pointer-events: none; max-width: 300px; font-size: 12px; line-height: 1.45;
+  color: var(--text); background: var(--overlay); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 9px; }
+.scene-tip b { font-weight: 600; }
+.scene-panel { position: absolute; top: 10px; right: 10px; bottom: 10px; width: 270px; overflow-y: auto; z-index: 2;
+  background: var(--overlay); backdrop-filter: blur(8px); border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 10px 12px; font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 8px; }
+.scene-panel h4 { margin: 4px 0 0; font-size: 11px; font-weight: 600; color: var(--text-faint); letter-spacing: .03em; text-transform: uppercase; }
+.scene-panel .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.scene-panel select { flex: 1; min-width: 0; }
+.scene-panel input[type="range"] { flex: 1; width: auto; }
+.scene-panel .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.scene-panel .check.off { opacity: .55; cursor: not-allowed; }
+.scene-panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.scene-panel li { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 11px; }
+.scene-panel li button { all: unset; cursor: pointer; color: var(--text); }
+.scene-panel li button:hover, .scene-panel li button:focus-visible { color: var(--accent-strong); text-decoration: underline; }
+.scene-panel .muted { color: var(--text-faint); }
+.scene-panel .warn { color: var(--warn); }
+.scene-panel .note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+.scene-panel .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.scene-panel .swatch.ring { background: transparent !important; border: 2px solid currentColor; width: 7px; height: 7px; }
 .map-view[hidden] { display: none; }
 #map { position: absolute; inset: 0; background: var(--map-bg); }
 #map.picking, #map.picking .leaflet-interactive { cursor: crosshair; }
@@ -755,7 +851,10 @@ a.btn { text-decoration: none; }
 .map-card { padding: 8px 4px; width: 250px; }
 .map-card .check { padding: 4px 10px; }
 .map-note { margin: 6px 12px 4px; font-size: 11.5px; color: var(--text-faint); line-height: 1.45; }
-.map-legend { position: absolute; left: 12px; bottom: 30px; z-index: 500; padding: 10px 12px; min-width: 190px; }
+.map-legend { position: absolute; left: 12px; bottom: 30px; z-index: 500; padding: 6px 12px; }
+.map-legend[open] { min-width: 190px; padding-bottom: 10px; }
+.map-legend > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-dim); padding: 2px 0; }
+.map-legend[open] > summary { margin-bottom: 6px; }
 .legend-title { font-size: 11px; font-weight: 600; color: var(--text-faint); margin: 6px 0 4px; }
 .legend-title:first-child { margin-top: 0; }
 .legend-row { display: grid; grid-template-columns: 12px 1fr auto; gap: 8px; align-items: center; font-size: 12px; padding: 1px 0; color: var(--text-dim); }
@@ -779,14 +878,24 @@ a.btn { text-decoration: none; }
 .link-btn.danger:hover { background: rgba(239, 68, 68,.12); }
 .export-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 6px; }
 .export-list .btn { flex: none; justify-content: flex-start; }
+.report-form { display: grid; gap: 6px; }
+.report-form summary { cursor: pointer; font-size: 12px; color: var(--text-dim); }
+.report-field { display: grid; gap: 2px; font-size: 11.5px; color: var(--text-dim); }
+.report-field textarea { width: 100%; resize: vertical; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg-sink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
+.report-approve { display: grid; gap: 6px; }
+.report-approve input { width: 100%; }
 .ok-note { color: var(--fit) !important; }
 
 /* ---------- narrower windows ---------- */
 /* Nothing in the toolbar may shrink: a squeezed <select> loses its text and shows only its
    arrow (seen on a real laptop screen). Labels go first, then the status pill, then dock width. */
 .toolbar > * { flex-shrink: 0; }
+/* ...except the status pill, which ellipsises instead of pushing the toolbar into a scrollbar. */
+.toolbar > .toolbar-right { flex-shrink: 1; min-width: 120px; }
+.toolbar-right .pill { min-width: 0; }
 #paletteSelect { min-width: 140px; }
-@media (max-width: 1500px) {
+@media (max-width: 1600px) { /* below this the labelled tools alone overflow (measured at 1568: 1583 px) */
   .seg .tool[data-tool] > span, .seg .tool[data-view] > span, #candidatesToggle > span { display: none; }
   .seg .tool[data-tool], .seg .tool[data-view], #candidatesToggle { padding: 0 9px; }
   .toolbar { gap: 8px; }
@@ -979,4 +1088,17 @@ select.finput { padding-right: 28px; }
 
 /* theme toggle (menubar) */
 .icon-btn { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+
+/* Layout toggles (js/layout.js): a filled pane = that part is showing, as in an editor. */
+.layout-toggles { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
+.layout-i { fill: none; }
+.layout-i .pane { fill: transparent; stroke: none; transition: fill .15s var(--ease); }
+[data-layout].on .layout-i .pane { fill: currentColor; opacity: .55; }
+[data-layout].on { color: var(--text); }
+body[data-mode="field"] .layout-toggles { display: none; }
+body[data-hide-left] { --dock-w: 0px; }
+body[data-hide-left] .dock-left { display: none; }
+body[data-hide-right] { --dock-right-w: 0px; }
+body[data-hide-right] .dock-right { display: none; }
+body[data-hide-bottom] .ascan-strip { display: none; }
 .verify-link { text-decoration: none; font-size: 12.5px; }

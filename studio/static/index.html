@@ -37,6 +37,8 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
     <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
     <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-drawing" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 15h7v5M14 4v6h7M7 9h3M15 15l3 3"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
     <symbol id="i-scan" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M6 15c2-6 4-8 6-8s4 2 6 8"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
   </defs>
@@ -57,6 +59,12 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
   <div class="menubar-right">
     <span class="job-badge" id="jobBadge">no line open</span>
     <a class="menu verify-link" href="/verify" title="Verify the detector's targets to train a learned detector">Verify targets</a>
+    <div class="layout-toggles" role="group" aria-label="Layout">
+      <button class="menu icon-btn" type="button" data-layout="left" title="Show or hide the project tree (⌘/Ctrl+B)" aria-label="Project tree"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="3" y="4.5" width="6.5" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="bottom" title="Show or hide the A-scan strip (⌘/Ctrl+J)" aria-label="A-scan strip"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="3" y="13.5" width="18" height="6" rx="2"/><path d="M3 13.5h18"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="right" title="Show or hide the inspector: Process, Targets, Assistant, Review… (⌘/Ctrl+Alt+B)" aria-label="Inspector"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><rect class="pane" x="14.5" y="4.5" width="6.5" height="15" rx="2"/><path d="M14.5 4.5v15"/></svg></button>
+      <button class="menu icon-btn" type="button" data-layout="focus" title="Focus: hide all three, or bring them back" aria-label="Focus on the view"><svg class="i layout-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><rect class="pane" x="8" y="8" width="8" height="8" rx="1"/></svg></button>
+    </div>
     <button class="menu icon-btn" id="themeToggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="i"><use href="#i-sun"/></svg></button>
     <form class="account" method="post" action="/logout">
       <span class="account-name" id="accountName" title="Signed in"></span>
@@ -69,6 +77,8 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
   <div class="seg" id="viewToggle" role="tablist" aria-label="View">
     <button class="tool active" data-view="radargram" title="Radargram"><svg class="i"><use href="#i-scan"/></svg><span>Radargram</span></button>
     <button class="tool" data-view="map" title="Map of the survey"><svg class="i"><use href="#i-map"/></svg><span>Map</span></button>
+    <button class="tool" data-view="3d" title="The whole site in 3D"><svg class="i"><use href="#i-cube"/></svg><span>3D</span></button>
+    <button class="tool" data-view="drawing" title="A survey company's CAD utility drawing, as drawn"><svg class="i"><use href="#i-drawing"/></svg><span>Drawing</span></button>
   </div>
   <div class="seg" id="toolButtons" role="toolbar" aria-label="Interaction tools">
     <button class="tool" data-tool="pan"       title="Pan and select (H)"><svg class="i"><use href="#i-pan"/></svg><span>Pan</span></button>
@@ -150,7 +160,24 @@ try { const t = localStorage.getItem("gpr-theme"); document.documentElement.data
     <div class="map-view" id="mapView" hidden>
       <div id="map"></div>
       <div class="map-overlay" id="mapOverlay"></div>
-      <div class="map-legend" id="mapLegend"></div>
+      <details class="map-legend"><summary>Legend</summary><div id="mapLegend"></div></details>
+    </div>
+
+    <div class="drawing-view" id="drawingView" hidden>
+      <div id="drawingMap"></div>
+      <div class="drawing3d" id="drawing3d" hidden>
+        <canvas id="drawing3dCanvas" aria-label="The drawing's utilities in 3D at their labelled depths"></canvas>
+        <div class="scene-labels" id="drawing3dLabels"></div>
+      </div>
+      <aside class="scene-panel" id="drawingPanel"></aside>
+    </div>
+
+    <div class="scene-view" id="sceneView" hidden>
+      <canvas id="scene3d" aria-label="3D view of the site's radar lines"></canvas>
+      <div class="scene-labels" id="sceneLabels"></div>
+      <div class="scene-tip" id="sceneTip" hidden></div>
+      <div class="scene-compass" title="North"><span id="sceneCompass">▲<b>N</b></span></div>
+      <aside class="scene-panel" id="scenePanel"></aside>
     </div>
 
     <div class="ascan-strip">

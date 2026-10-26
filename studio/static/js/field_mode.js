@@ -102,6 +102,9 @@ function ensureMap() {
   L.control.scale({ metric: true, imperial: false }).addTo(map);
   groups.osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: OSM_MAX_ZOOM, maxNativeZoom: 19, attribution: "© OpenStreetMap contributors",
+    // OSM's tile policy refuses requests without a Referer, and the page's own policy (same-origin)
+    // sends none cross-site. These tiles alone get the origin, never the page path.
+    referrerPolicy: "strict-origin-when-cross-origin",
   });
   map.on("click", () => select(null));
 }

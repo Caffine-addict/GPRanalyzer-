@@ -84,11 +84,18 @@ def test_render_resamples_to_the_requested_size() -> None:
     assert to_rgb(data, DisplaySettings(width_px=800, height_px=400)).shape == (400, 800, 3)
 
 
-def test_resampling_never_invents_a_value_that_was_not_in_the_source() -> None:
-    # Nearest-neighbour only: a blended pixel would read as a real sample.
+def test_enlarging_blends_neighbours_but_never_overshoots_them() -> None:
+    # Linear, not cubic: in-between shades appear, but nothing darker or brighter than the source.
     data = np.array([[-1.0, 1.0], [1.0, -1.0]])
+    native = to_rgb(data, DisplaySettings(palette="grey", contrast_percentile=100))
     out = to_rgb(data, DisplaySettings(palette="grey", contrast_percentile=100, width_px=8, height_px=8))
-    assert len(np.unique(out.reshape(-1, 3), axis=0)) == 2
+    assert native.min() <= out.min() and out.max() <= native.max()
+    assert len(np.unique(out.reshape(-1, 3), axis=0)) > 2
+
+
+def test_a_render_larger_than_the_limit_is_refused() -> None:
+    with pytest.raises(ValueError, match="px limit"):
+        to_rgb(np.zeros((4, 4)), DisplaySettings(width_px=5000, height_px=4))
 
 
 def test_rendering_an_empty_radargram_raises() -> None:

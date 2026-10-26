@@ -70,6 +70,9 @@ def to_rgb(data: np.ndarray, settings: DisplaySettings) -> np.ndarray:
     return resize(palette_module.lut(settings.palette)[indices], settings)  # (h, w, 3) RGB
 
 
+MAX_RENDER_PX = 4096  # the client asks for its canvas size; this bounds a hand-made request
+
+
 def resize(coloured: np.ndarray, settings: DisplaySettings) -> np.ndarray:
     """An RGB image at the size the settings ask for (native when unset)."""
     # `is None` rather than a falsy check: width_px=0 is a client asking for a
@@ -79,9 +82,15 @@ def resize(coloured: np.ndarray, settings: DisplaySettings) -> np.ndarray:
     target_h = coloured.shape[0] if settings.height_px is None else settings.height_px
     if target_w < 1 or target_h < 1:
         raise ValueError(f"invalid render size {target_w}x{target_h}")
+    if max(target_w, target_h) > MAX_RENDER_PX:
+        raise ValueError(f"render size {target_w}x{target_h} is over the {MAX_RENDER_PX} px limit")
     if (target_w, target_h) == (coloured.shape[1], coloured.shape[0]):
         return coloured
-    return cv2.resize(coloured, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+    # Enlarging: linear, so the canvas shows a smooth image instead of uneven blocks; it only
+    # blends neighbouring samples, never overshoots them (cubic would invent amplitudes).
+    # Shrinking: area, so dropped traces are averaged in rather than aliased away.
+    enlarging = target_w * target_h > coloured.shape[0] * coloured.shape[1]
+    return cv2.resize(coloured, (target_w, target_h), interpolation=cv2.INTER_LINEAR if enlarging else cv2.INTER_AREA)
 
 
 def encode_png(rgb: np.ndarray) -> bytes:

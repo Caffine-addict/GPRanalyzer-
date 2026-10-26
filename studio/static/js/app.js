@@ -7,6 +7,7 @@
 
 import * as api from "./api.js";
 import * as theme from "./theme.js";
+import * as layout from "./layout.js";
 import * as ascan from "./ascan.js";
 import * as docks from "./docks.js";
 import * as documents from "./documents.js";
@@ -26,10 +27,15 @@ import * as processing from "./panel_processing.js";
 import * as targets from "./panel_targets.js";
 import * as velocityPanel from "./panel_velocity.js";
 import * as view from "./view.js";
+import * as view3d from "./view3d.js";
+import * as drawingView from "./drawing_view.js";
 import { DEFAULT_PROCESSING, activeChannel, activeVelocity, getState, setState, subscribe } from "./state.js";
 import { el, replace } from "./dom.js";
 
-const ASCAN_DEBOUNCE_MS = 90;
+/* Zooming and resizing change the size the radargram is drawn at many times a second; the image
+ * is re-requested at the new size only once that settles, and is stretched in the meantime. */
+const IMAGE_DEBOUNCE_MS = 150;
+const MAX_IMAGE_PX = 4096; // studio/render.py MAX_RENDER_PX
 
 const dom = {
   jobBadge: document.getElementById("jobBadge"),
@@ -50,12 +56,12 @@ const dom = {
 };
 
 let frameQueued = false;
-let ascanTimer = null;
-/* Identifies the A-scan currently on screen: line, channel, trace *and* the
- * processing chain. Keying on the trace index alone let the wiggle survive a
- * processing change, leaving it showing a different signal from the radargram
- * directly above it — and the amplitude readout in the status bar with it. */
-let lastAscanKey = null;
+let wantedImage = null;
+let imageTimer = null;
+/* The open line's processed samples, fetched once per line, channel and chain. The A-scan and the
+ * Amp readout read the trace under the cursor out of it on the same frame as X/T/Z, so neither lags
+ * the cursor, and neither can show a different signal from the radargram above it. */
+let lineSamples = { key: null, line: null };
 
 function scheduleRender() {
   if (frameQueued) return;
@@ -85,7 +91,6 @@ async function openJob(job) {
       hyperbola: null,
       fit: null,
       measure: null,
-      ascan: null,
       picks: await api.listPicks(job),
       // Candidates are optional context: a job whose detector has never been
       // run is perfectly openable, just without an overlay to toggle.
@@ -95,6 +100,7 @@ async function openJob(job) {
     syncLocation();
     await assistantActions.loadReviews(job);
     assistantActions.onLineChanged();
+    if (mapView.isShown()) mapView.focusLine(job);
   } catch (error) {
     setState({ status: `Could not open ${job}: ${error.message}` });
   }
@@ -113,7 +119,7 @@ function syncLocation() {
 function selectChannel(extension) {
   // A fit measured on one channel does not carry to another — different
   // sampling interval, different time axis, different data entirely.
-  setState({ channel: extension, hyperbola: null, fit: null, ascan: null, measure: null });
+  setState({ channel: extension, hyperbola: null, fit: null, measure: null });
   resetView();
   syncLocation();
   assistantActions.onLineChanged();
@@ -124,31 +130,49 @@ function resetView() {
   if (channel) setState({ view: view.fitView(channel), viewFitted: true });
 }
 
-function ascanKey(state, index) {
-  return `${state.job}/${state.channel}/${index}/${JSON.stringify(state.processing)}`;
+const samplesKey = (state) => `${state.job}/${state.channel}/${JSON.stringify(state.processing)}`;
+
+function loadLineSamples(state) {
+  if (!state.job || !state.channel) return;
+  const key = samplesKey(state);
+  if (key === lineSamples.key) return; // loaded, loading, or failed for this chain: no retry until it changes
+  lineSamples = { key, line: null };
+  api.lineSamples(state.job, state.channel, state.processing)
+    .then((line) => {
+      if (lineSamples.key !== key) return; // the line or chain changed while this was loading
+      lineSamples = { key, line };
+      scheduleRender();
+    })
+    .catch((error) => setState({ status: `Could not read the traces: ${error.message}` }));
 }
 
-function refreshAscan() {
-  const state = getState();
+/** The trace under the cursor, as the A-scan draws it, or null. */
+function traceUnderCursor(state) {
   const channel = activeChannel(state);
-  if (!channel || !state.cursor) return;
-  const index = Math.round(state.cursor.trace);
-  const key = ascanKey(state, index);
-  if (key === lastAscanKey) return;
-  lastAscanKey = key;
+  const line = lineSamples.key === samplesKey(state) ? lineSamples.line : null;
+  if (!line || !channel || !state.cursor) return null;
+  const trace = Math.round(state.cursor.trace);
+  if (trace < 0 || trace >= line.nTraces) return null;
+  return {
+    trace,
+    distance_m: trace * channel.trace_spacing_m,
+    sample_interval_ns: channel.sample_interval_ns,
+    samples: line.data.subarray(trace * line.nSamples, (trace + 1) * line.nSamples),
+  };
+}
 
-  clearTimeout(ascanTimer);
-  ascanTimer = setTimeout(async () => {
-    const current = getState();
-    if (!current.job || !current.channel) return;
-    try {
-      setState({ ascan: await api.getTrace(current.job, current.channel, index, current.processing) });
-    } catch {
-      // Let the next render re-ask rather than leaving a stale wiggle pinned
-      // under a radargram it no longer matches.
-      lastAscanKey = null;
-    }
-  }, ASCAN_DEBOUNCE_MS);
+/** The radargram at the size it is drawn on screen, in device pixels, so it is not stretched. */
+function requestImage(state, channel) {
+  const ratio = window.devicePixelRatio || 1;
+  const fit = (px) => Math.max(1, Math.min(MAX_IMAGE_PX, Math.round(px * ratio)));
+  const url = api.imageUrl(state.job, state.channel, state.processing, state.display, {
+    width: fit(channel.n_traces * state.view.scaleX),
+    height: fit((channel.n_samples - view.timeZeroSample(state)) * state.view.scaleY),
+  });
+  if (url === wantedImage) return;
+  wantedImage = url;
+  clearTimeout(imageTimer);
+  imageTimer = setTimeout(() => view.setImage(url, scheduleRender), IMAGE_DEBOUNCE_MS);
 }
 
 /* ---------- tool actions ---------- */
@@ -375,7 +399,7 @@ function renderToolbar(state) {
   dom.chainPill.classList.toggle("active", Boolean(state.status));
 }
 
-function renderStatusBar(state) {
+function renderStatusBar(state, trace) {
   const channel = activeChannel(state);
   const velocity = activeVelocity(state);
   const cursor = state.cursor;
@@ -388,7 +412,7 @@ function renderStatusBar(state) {
   dom.statV.textContent = velocity.value ? `${velocity.value.toFixed(4)} m/ns` : "unavailable";
 
   const sampleIndex = cursor ? Math.round(cursor.sample) : null;
-  const amplitude = state.ascan?.samples?.[sampleIndex];
+  const amplitude = trace?.samples[sampleIndex];
   dom.statAmp.textContent = amplitude == null ? "—" : amplitude.toFixed(1);
 
   const measured = velocity.source === "fitted";
@@ -406,24 +430,19 @@ function render() {
 
   dom.canvasEmpty.hidden = Boolean(channel);
   if (channel && state.job) {
-    view.setImage(
-      api.imageUrl(state.job, state.channel, state.processing, state.display, {
-        width: channel.n_traces,
-        height: channel.n_samples,
-      }),
-      scheduleRender,
-    );
+    requestImage(state, channel);
   } else {
+    clearTimeout(imageTimer);
+    wantedImage = null;
     view.clearImage();
   }
 
   view.draw();
-  // Driven from render, not only from cursor motion: the A-scan is stale after
-  // any processing change too, and refreshAscan() no-ops when it is current.
-  refreshAscan();
-  ascan.draw(state.ascan, state.cursor ? Math.round(state.cursor.sample) : null);
+  loadLineSamples(state); // a no-op once this line and chain are loaded
+  const trace = traceUnderCursor(state);
+  ascan.draw(trace, state.cursor ? Math.round(state.cursor.sample) : null);
   renderToolbar(state);
-  renderStatusBar(state);
+  renderStatusBar(state, trace);
   processing.render();
   velocityPanel.render();
   targets.render();
@@ -431,6 +450,7 @@ function render() {
   assistantPanel.render();
   reviewsPanel.render();
   mapPanel.render();
+  view3d.update(sceneSettings(state)); // a no-op unless the 3D view is open and its processing changed
   renderReviewBadge(state);
   info.render();
   docks.renderTree();
@@ -440,14 +460,46 @@ function render() {
  * rather than shrinking them, so neither is ever drawn at a misleading scale. */
 function setView(name) {
   const onMap = name === "map";
+  const on3d = name === "3d";
+  const onDrawing = name === "drawing";
   for (const button of document.querySelectorAll("#viewToggle .tool")) {
     button.classList.toggle("active", button.dataset.view === name);
   }
-  document.getElementById("canvasWrap").hidden = onMap;
-  document.querySelector(".ascan-strip").hidden = onMap;
-  mapView.show(onMap);
+  document.getElementById("canvasWrap").hidden = onMap || on3d || onDrawing;
+  document.querySelector(".ascan-strip").hidden = onMap || on3d || onDrawing;
+  drawingView.show(onDrawing);
+  mapView.show(onMap, getState().job);
+  const { job, channel } = getState();
+  view3d.show(on3d, { ...sceneSettings(getState()), site: job?.includes("_") ? job.split("_")[0] : null, channel: channel ?? "RAD" });
   if (onMap) docks.showTab("map");
-  else handleResize();
+  else if (!on3d && !onDrawing) handleResize();
+}
+
+/* What the 3D curtains share with the 2D view, so both show the same processed signal and depths. */
+const sceneSettings = (state) => ({
+  processing: state.processing, display: state.display, timeZeroSample: view.timeZeroSample(state),
+});
+
+/** From the 3D view: open a line on the radargram at a chainage, or a claim's Review card. */
+async function openFrom3d(job, channel, chainageM, showCandidates = false) {
+  await openAt(job, channel, chainageM);
+  if (showCandidates) setState({ showCandidates: true });
+}
+
+async function openRunFrom3d(run) {
+  const first = run.targets[0];
+  await openAt(first.job, getState().channel ?? "RAD", first.chainage_m);
+  setState({ highlightRunId: run.id });
+  docks.showTab("review");
+}
+
+async function openReviewFrom3d(job, channel, chainageM, reviewId) {
+  await openAt(job, channel, chainageM);
+  await assistantActions.loadReviews(job); // the line may have been open already, with claims from before
+  const review = getState().reviews.find((r) => r.id === reviewId);
+  if (!review) return setState({ status: "That claim is no longer stored for this line" });
+  assistantActions.focusReview(review);
+  docks.showTab("review");
 }
 
 /* Claims waiting for a supervisor, counted on the Review tab so they are never out of sight. */
@@ -472,13 +524,88 @@ function handleResize() {
 /* ---------- menu bar ---------- */
 
 async function afterLineImported(job) {
+  reviewsPanel.forgetSites(); // which sites exist may have changed
   setState({ jobs: await api.listJobs() });
   await openJob(job);
 }
 
-/* A readable starting view: remove the flat direct-wave band, then even out depth. The same
- * chain the performance profile measures, so what an operator sees is what was timed. */
-const STANDARD_VIEW = { background_removal: "mean", gain: "agc" };
+/* ---------- removing a line (studio/line_trash.py): recoverable, never a delete ---------- */
+
+function confirmRemoveLine(job) {
+  modal.open(
+    el("h3", { text: `Remove ${job}?` }),
+    el("p", { text: "The line leaves the project, the Map, Field mode and the 3D view. Its radar files and everything " +
+      "recorded on it (picks, claims, survey points) are kept together in the removed_lines folder." }),
+    el("p", { text: "You can put it back from File › Removed lines…" }),
+    el("div", { class: "btn-row", style: "padding:0" }, [
+      el("button", { class: "btn ghost", text: "Cancel", onclick: () => modal.close() }),
+      el("button", { class: "btn bad", text: "Remove line", onclick: () => removeLine(job) }),
+    ]),
+  );
+}
+
+async function removeLine(job) {
+  modal.close();
+  try {
+    await api.removeLine(job);
+  } catch (error) {
+    setState({ status: `Could not remove ${job}: ${error.message}` });
+    return;
+  }
+  if (getState().job === job) {
+    setState({ job: null, jobDetail: null, expandedJob: null, channel: null, hyperbola: null, fit: null, measure: null,
+      picks: [], candidates: [], reviews: [], siteRuns: null });
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+  reviewsPanel.forgetSites(); // which sites exist may have changed
+  setState({ jobs: await api.listJobs(), status: `Removed ${job}. Put it back from File › Removed lines…` });
+}
+
+async function showRemovedLines() {
+  const list = el("ul", { class: "export-list" }, [el("li", { class: "panel-note", text: "Loading…" })]);
+  modal.open(el("h3", { text: "Removed lines" }),
+    el("p", { text: "Lines taken out of the project, with everything recorded on them. Restore puts a line back as it was." }),
+    list,
+    el("div", { class: "btn-row", style: "padding:0" }, [el("button", { class: "btn ghost", text: "Close", onclick: () => modal.close() })]));
+  try {
+    const entries = await api.removedLines();
+    replace(list, ...(entries.length ? entries.map((e) => el("li", { class: "row" }, [
+      el("span", { text: `${e.job} · removed by ${e.removed_by} · ${e.removed_at.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2}).*/, "$1-$2-$3 $4:$5")} UTC` }),
+      el("button", { class: "btn", text: "Restore", onclick: () => restoreLine(e) }),
+    ])) : [el("li", { class: "panel-note", text: "No removed lines." })]));
+  } catch (error) {
+    replace(list, el("li", { class: "panel-note warn", text: `Could not list removed lines: ${error.message}` }));
+  }
+}
+
+async function restoreLine(entry) {
+  try {
+    await api.restoreLine(entry.id);
+  } catch (error) {
+    setState({ status: `Could not restore ${entry.job}: ${error.message}` });
+    modal.close();
+    return;
+  }
+  modal.close();
+  reviewsPanel.forgetSites(); // which sites exist may have changed
+  setState({ jobs: await api.listJobs(), status: `Restored ${entry.job}.` });
+  await openJob(entry.job);
+}
+
+/* A readable starting view: dewow, band-pass around the antenna's centre frequency, a windowed
+ * background removal (a whole-line mean leaves vertical striping where the ground changes along
+ * the line), then gain. The band is half to twice the centre frequency the file header records;
+ * with none recorded, band-pass stays off and the Processing panel says why. Never a guessed band. */
+function standardView(channel) {
+  const centre = channel?.antenna_freq_mhz;
+  return {
+    ...DEFAULT_PROCESSING,
+    dewow: true,
+    background_removal: "moving", // over DEFAULT_PROCESSING.background_window_traces (51)
+    gain: "agc",
+    ...(centre ? { bandpass: true, bandpass_low_mhz: Math.round(centre / 2), bandpass_high_mhz: Math.round(centre * 2) } : {}),
+  };
+}
 
 function installMenus() {
   const noLine = () => !getState().job;
@@ -496,13 +623,21 @@ function installMenus() {
         hint: noLine() ? "Open a line first" : "",
         action: () => window.open(api.picksCsvUrl(getState().job), "_blank"),
       },
+      "-",
+      {
+        label: noLine() ? "Remove line…" : `Remove ${getState().job}…`,
+        disabled: noLine(),
+        hint: noLine() ? "Open a line first" : "",
+        action: () => confirmRemoveLine(getState().job),
+      },
+      { label: "Removed lines…", action: showRemovedLines },
     ],
     process: () => [
       { label: "Raw — no processing", action: () => setState({ processing: { ...DEFAULT_PROCESSING } }) },
-      { label: "Standard view (background removal + AGC)",
-        action: () => setState({ processing: { ...DEFAULT_PROCESSING, ...STANDARD_VIEW } }) },
+      { label: "Standard view (dewow, band-pass, windowed background, AGC)",
+        action: () => setState({ processing: standardView(activeChannel(getState())) }) },
       { label: "Standard view + migration",
-        action: () => setState({ processing: { ...DEFAULT_PROCESSING, ...STANDARD_VIEW, migrate: true } }) },
+        action: () => setState({ processing: { ...standardView(activeChannel(getState())), migrate: true } }) },
     ],
     view: () => [
       { label: "Zoom in", action: () => interact.zoomBy(1.25) },
@@ -530,6 +665,7 @@ function installMenus() {
 async function boot() {
   modal.init();
   theme.initToggle(document.getElementById("themeToggle"));
+  layout.init();
   window.addEventListener("gpr-theme", () => setState({})); // repaint the canvases in the new colours
   api.whoAmI().then(({ username }) => {
     document.getElementById("accountName").textContent = username;
@@ -544,6 +680,7 @@ async function boot() {
   docks.initAccordions();
   docks.initInspectorTabs();
   mapPanel.init({ onShowMap: () => setView("map") });
+  view3d.init({ openAt: openFrom3d, openReview: openReviewFrom3d, openRun: openRunFrom3d });
   for (const button of document.querySelectorAll("#viewToggle .tool")) {
     button.addEventListener("click", () => setView(button.dataset.view));
   }
@@ -559,7 +696,6 @@ async function boot() {
   interact.install({
     onPick: (point) => savePick(point),
     onFitRegion: fitRegion,
-    onCursor: refreshAscan,
   });
 
   for (const button of dom.toolButtons.querySelectorAll(".tool")) {

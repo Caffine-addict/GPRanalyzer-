@@ -1,12 +1,9 @@
 /* The radargram canvas: rulers, image, overlays, and the data<->screen transform.
  *
- * The image is always fetched at the channel's *native* size (386 x 256 or so —
- * a few tens of KB) and scaled on the canvas with smoothing switched off. Two
- * consequences, both wanted: zooming never refetches, and every pixel on screen
- * is one real sample drawn larger rather than a blend of neighbouring samples.
- * Bilinear scaling would invent intermediate values and make a noisy line look
- * better resolved than it is — the same reason studio/render.py resamples
- * nearest-neighbour server-side.
+ * The image is requested at the size it is drawn, in device pixels (app.js requestImage), and
+ * re-requested once a zoom or resize settles; until then the last one is stretched to fit.
+ * Enlarging happens server-side by linear blending of neighbouring samples (studio/render.py),
+ * which never invents a value outside their range.
  */
 
 import { activeChannel, activeVelocity, getState } from "./state.js";
@@ -32,13 +29,13 @@ const frame = () => ({
 /* Candidate boxes are tinted by the shape the diagnoser measured, matching the
  * legend the Phase-1 tooling already used. Grey means "no class suggested" —
  * an honest absence, not a category. */
-const CANDIDATE_COLOURS = {
+export const CANDIDATE_COLOURS = {
   clear_point_reflector: "#00ff88",
   low_snr_point_reflector: "#ffee00",
   elongated_linear_target: "#00aaff",
   disturbed_zone: "#ff5533",
 };
-const CANDIDATE_UNDIAGNOSED = "#71717a";
+export const CANDIDATE_UNDIAGNOSED = "#71717a";
 
 const canvas = document.getElementById("radargram");
 const ctx = canvas.getContext("2d");
@@ -169,7 +166,8 @@ export function draw() {
   if (image) {
     // The server crops the rows above time zero, so the image starts there. Every coordinate
     // on screen stays a raw sample index; only times and depths are measured from time zero.
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true; // the image is near screen size; this only covers a settling zoom
+    ctx.imageSmoothingQuality = "high";
     const t0 = timeZeroSample(state);
     const topLeft = dataToScreen(view, 0, t0);
     ctx.drawImage(
@@ -352,11 +350,28 @@ function drawHyperbola(state, channel) {
  * supervisor has decided: amber dashed while proposed, green once confirmed, red dotted if
  * rejected. The circle is drawn on the target's own measured box, never somewhere a model
  * chose, so it always sits on real data. */
-const REVIEW_STYLES = {
+export const REVIEW_STYLES = {
   proposed: { colour: "#f59e0b", dash: [6, 4], mark: "?" },
   confirmed: { colour: "#22c55e", dash: [], mark: "✓" },
   rejected: { colour: "#ef4444", dash: [2, 3], mark: "✗" },
 };
+
+const LABEL_H = 15;
+const LABEL_GAP = 2;
+
+/** A label's spot: above its circle, else stacked higher, else below; null when every spot is taken. */
+function placeLabel(placed, plot, cx, top, bottom, width) {
+  const x = Math.min(Math.max(cx - width / 2, plot.x + 2), plot.x + plot.w - width - 2); // inside the canvas
+  const ys = [0, 1, 2].map((n) => top - 3 - LABEL_H - n * (LABEL_H + LABEL_GAP)).concat(bottom + 3);
+  for (const y of ys) {
+    if (y < plot.y + 2 || y + LABEL_H > plot.y + plot.h - 2) continue;
+    const box = { x, y, w: width, h: LABEL_H };
+    const clear = placed.every((o) => box.x + box.w + LABEL_GAP <= o.x || o.x + o.w + LABEL_GAP <= box.x
+      || box.y + box.h + LABEL_GAP <= o.y || o.y + o.h + LABEL_GAP <= box.y);
+    if (clear) return box;
+  }
+  return null;
+}
 
 function drawReviews(state, channel) {
   ctx.save();
@@ -371,30 +386,46 @@ function drawReviews(state, channel) {
     const held = newestPending.get(review.target_id);
     if (!held || review.created_at >= held.created_at) newestPending.set(review.target_id, review);
   }
-  const shown = state.reviews.filter((r) => r.status !== "proposed" || newestPending.get(r.target_id) === r);
-  for (const review of shown) {
-    if (review.channel !== channel.extension) continue;
+  const plot = plotRect();
+  const shapes = state.reviews
+    .filter((r) => r.channel === channel.extension && (r.status !== "proposed" || newestPending.get(r.target_id) === r))
+    .map((review) => {
+      const a = dataToScreen(state.view, review.x, review.y);
+      const b = dataToScreen(state.view, review.x + review.w, review.y + review.h);
+      const rx = Math.max(10, Math.abs(b.x - a.x) / 2 + 6);
+      const ry = Math.max(10, Math.abs(b.y - a.y) / 2 + 6);
+      return { review, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, rx, ry };
+    });
+  const under = (s) => {
+    if (!state.cursor) return false;
+    const p = dataToScreen(state.view, state.cursor.trace, state.cursor.sample);
+    return ((p.x - s.cx) / s.rx) ** 2 + ((p.y - s.cy) / s.ry) ** 2 <= 1;
+  };
+  for (const { review, cx, cy, rx, ry } of shapes) {
     const style = REVIEW_STYLES[review.status] ?? REVIEW_STYLES.proposed;
-    const a = dataToScreen(state.view, review.x, review.y);
-    const b = dataToScreen(state.view, review.x + review.w, review.y + review.h);
-    const cx = (a.x + b.x) / 2;
-    const cy = (a.y + b.y) / 2;
-    const rx = Math.max(10, Math.abs(b.x - a.x) / 2 + 6);
-    const ry = Math.max(10, Math.abs(b.y - a.y) / 2 + 6);
-    const highlighted = state.highlightReviewId === review.id;
     ctx.strokeStyle = style.colour;
-    ctx.lineWidth = highlighted ? 3 : 1.8;
+    ctx.lineWidth = state.highlightReviewId === review.id ? 3 : 1.8;
     ctx.setLineDash(style.dash);
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
     ctx.stroke();
-    const label = `${style.mark} ${review.identity}`;
+  }
+  // Labels after every circle, so none is drawn over. Highlighted and hovered ones claim a spot
+  // first; when the rest are too crowded to place, they show only while hovered.
+  const first = (s) => (state.highlightReviewId === s.review.id || under(s) ? 0 : 1);
+  const placed = [];
+  ctx.setLineDash([]);
+  for (const shape of [...shapes].sort((p, q) => first(p) - first(q) || p.cx - q.cx)) {
+    const style = REVIEW_STYLES[shape.review.status] ?? REVIEW_STYLES.proposed;
+    const label = `${style.mark} ${shape.review.identity}`;
     const width = ctx.measureText(label).width + 8;
-    ctx.setLineDash([]);
+    const box = placeLabel(placed, plot, shape.cx, shape.cy - shape.ry, shape.cy + shape.ry, width);
+    if (!box) continue;
+    placed.push(box);
     ctx.fillStyle = "rgba(10, 14, 20, 0.78)";
-    ctx.fillRect(cx - width / 2, cy - ry - 18, width, 15);
+    ctx.fillRect(box.x, box.y, box.w, box.h);
     ctx.fillStyle = style.colour;
-    ctx.fillText(label, cx - width / 2 + 4, cy - ry - 7);
+    ctx.fillText(label, box.x + 4, box.y + 11);
   }
   ctx.restore();
 }

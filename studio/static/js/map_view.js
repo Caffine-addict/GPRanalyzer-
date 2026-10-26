@@ -175,13 +175,16 @@ function ensureMap() {
   map = L.map("map", { zoomControl: true, attributionControl: true, preferCanvas: true }).setView([12.975, 77.61], 14);
   osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 20, maxNativeZoom: 19, attribution: "© OpenStreetMap contributors",
+    // OSM's tile policy refuses requests without a Referer, and the page's own policy (same-origin)
+    // sends none cross-site. These tiles alone get the origin, never the page path.
+    referrerPolicy: "strict-origin-when-cross-origin",
   });
   L.control.scale({ metric: true, imperial: false }).addTo(map);
   map.on("click", (event) => clickHandler?.(event.latlng));
 }
 
 /** Load (or reload) everything and draw it. Called when the map is shown and after a save. */
-export async function refresh() {
+export async function refresh({ fitAll = true } = {}) {
   ensureMap();
   map.invalidateSize();
   try {
@@ -199,7 +202,7 @@ export async function refresh() {
       `${lines.length - placed.length} not placed.`;
     redraw();
     renderLegend();
-    if (!fitted) {
+    if (!fitted && fitAll) {
       const bounds = L.latLngBounds([]);
       for (const layer of [layers.vendor, layers.lines]) {
         if (layer && layer.getLayers().length) bounds.extend(layer.getBounds());
@@ -213,22 +216,33 @@ export async function refresh() {
   }
 }
 
-export function show(on) {
+/** Show or hide the map; on show, zoom to the open line (`job`), else to everything placed. */
+export async function show(on, job) {
   document.getElementById("mapView").hidden = !on;
-  if (on) refresh();
+  if (!on) return;
+  await refresh({ fitAll: !job }); // fitting everything first would animate over the line's zoom
+  if (job) await focusLine(job);
 }
 
-/** Zoom to one line's track, if it has one. */
+export const isShown = () => !document.getElementById("mapView").hidden;
+
+/** Zoom to one line: its track or location plus its call-outs, with room around them. */
 export async function focusLine(job) {
   ensureMap();
   try {
-    const collection = await api.lineGeojson(job);
-    const track = collection.features.find((f) => f.geometry.type === "LineString");
-    const spot = collection.features.find((f) => f.properties.kind === "line_location");
-    if (track) map.fitBounds(L.geoJSON(track).getBounds(), { padding: [60, 60], maxZoom: 20 });
-    else if (spot) map.setView([spot.geometry.coordinates[1], spot.geometry.coordinates[0]], 19);
+    const bounds = L.latLngBounds([]);
+    for (const feature of (await api.lineGeojson(job)).features) {
+      const p = feature.properties;
+      bounds.extend(p.kind === "line_location" // GPS froze: frame the circle the survey happened in
+        ? L.latLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0]).toBounds(2 * (p.uncertainty_radius_m ?? 0))
+        : L.geoJSON(feature).getBounds());
+    }
+    if (!bounds.isValid()) return; // not placed: nothing to zoom to
+    fitted = true; // the line's zoom stands; a later refresh must not fit everything over it
+    if (bounds.getNorthEast().equals(bounds.getSouthWest())) map.setView(bounds.getCenter(), 19, { animate: false });
+    else map.fitBounds(bounds, { padding: [60, 60], maxZoom: 20, animate: false });
   } catch {
-    /* no track yet: nothing to zoom to */
+    /* no position yet: nothing to zoom to */
   }
 }
 
