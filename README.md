@@ -1,492 +1,82 @@
-# gpr-analyzer
+# GPR Analyzer
 
-**In one sentence:** this software looks at Ground Penetrating Radar scans
-(a way of "seeing" what's buried underground without digging), automatically
-spots things like buried pipes, voids, or disturbed soil, explains what it
-found in plain language, flags how urgent each one is, and shows all of that
-on screen while the survey is still happening — plus a summary PDF at the
-end.
+Software that turns ground-penetrating-radar (GPR) scans and vendor survey drawings into checkable
+data, so engineers can locate buried utilities before they dig.
 
-## What is this, really?
+Built during an AI engineering internship with Puravankara Ltd. under Dayananda Sagar University's
+"Lab to Land: AI for Sustainable Construction" programme.
 
-**Ground Penetrating Radar (GPR)** is a tool surveyors drag or push across
-the ground. It sends radar pulses into the soil and records what bounces
-back, producing an image called a **B-scan** — think of it like an ultrasound
-for the ground. Reading those images by eye and telling a buried pipe apart
-from a rock or a patch of noise normally takes a trained specialist and a
-lot of time.
+## What it does
 
-This project automates that reading process, end to end:
+| Part | What it does |
+|---|---|
+| **GPR Studio** (`studio/`) | Interpretation workstation for recorded radar lines: processing chain (time-zero, dewow, background removal, band-pass, Kirchhoff migration, gain, stacking), hyperbola picking with a RANSAC velocity fit, and depth read-outs. |
+| **Drawing extraction** (`reference/`) | Reads utility call-outs (type, depth, chainage, geo points) from vendor survey PDFs, with OCR for scanned sheets that have no text layer. |
+| **AI assistant** (`reason/`, `studio/assistant.py`) | An LLM (Groq, `gpt-oss`, strict JSON output) explains a measured target in plain language. Every claim stays *proposed* until a named supervisor confirms or rejects it, and a review report PDF records each decision. |
+| **Maps** (`studio/georef.py`, `studio/geo_export.py`) | Places lines on a map from chainage plus surveyed reference points, and exports findings as GeoJSON, KML and DXF for GIS and CAD users. |
+| **Live pipeline** (`sources/`, `pipeline/`, `api/`, `dashboard/`) | Source → preprocess → detect → evidence → risk → store, streamed over FastAPI + WebSocket to operator, manager and PM views, with an end-of-survey PDF report. |
+| **Synthetic data** (`simulate/`) | Random subsurface scenes simulated with gprMax (in Docker) and rendered into a labelled detector dataset, because no labelled real radar data exists. |
 
-1. **Detect** — an AI model trained on real GPR images scans each B-scan and
-   marks anything that looks like one of 9 known feature types (see below).
-2. **Assess** — each detection gets a plain-language explanation ("what is
-   this, where is it, why do we think so, how confident are we") from an AI
-   assistant, plus an automatic risk level: **LOW**, **MEDIUM**, or **HIGH**.
-3. **Show** — everything above shows up live, on a web dashboard, while the
-   survey is still in progress — no waiting until the end to find out
-   something risky was just detected.
-4. **Report** — at the end of a survey, a PDF summary is generated
-   automatically, listing everything found, sorted by how urgent it is.
+## Measured results
 
-Three kinds of people can use the dashboard, each seeing a view suited to
-their job:
+Every figure below was measured on real data, none estimated:
 
-- **Operator** — the person doing the survey on-site. Starts/stops a survey
-  and watches results appear live as they walk the ground.
-- **Manager** — reviews every survey that's been run, drills into any one
-  of them to see the full list of what was found.
-- **PM** (project manager) — checks how one specific patch of ground has
-  looked across *every* time it's been surveyed, to spot changes over time.
+- **Drawing extraction:** 1,743 utility call-outs read from vendor survey drawings, 360 of them from
+  scanned sheets via OCR (94% precision, 69% recall, scored against sheets with a text layer).
+- **Velocity check:** hyperbola fits on the vendor's own radargrams gave a median soil dielectric of
+  7.2, against the 7.3 the vendor reported.
+- **Placement:** a synthetic end-to-end test put targets on the map within 5.5 mm of their true
+  positions.
+- **Public benchmark** ([University of Twente](https://doi.org/10.4121/96303227-5886-41c9-8607-70fdd2cfe7c1.v1),
+  125 surveys with trench ground truth): picks placed on the GNSS map and traced across 3+ lines
+  found 17.4% of utilities against 10.3% for the same picks with scrambled positions (sign test
+  p = 0.0005). Permittivity estimates are still only slightly better than guessing the median
+  (21.9% vs 23.4% median error). Full numbers, including what failed: [`docs/EXTERNAL_DATA.md`](docs/EXTERNAL_DATA.md).
 
-One more thing that matters a lot here: **the system never guesses and
-pretends it measured something.** If it can't be sure of a number (say, how
-deep something is buried), it says so honestly — "unavailable" — instead of
-showing a number that looks precise but isn't. Every figure shown is labelled
-as either **calibrated** (a real measurement), **estimated** (a rough guess,
-clearly marked as such), or **unavailable** (we genuinely don't know). That
-same honesty applies to the project itself: as of today, there's no trained
-detection model included yet and no real radar hardware connected — see
-[Project status](#project-status) below for exactly what's built and running
-versus what's still waiting on real-world data.
+## Design rules
 
----
-
-The rest of this document goes deeper for anyone setting the project up,
-extending it, or reviewing the code.
-
-**In more technical terms:** an end-to-end pipeline for GPR B-scan analysis —
-YOLOv8 detection over a 9-class subsurface-feature taxonomy, evidence
-extraction with honest confidence labelling, weighted risk scoring, and
-LLM-generated findings (what/where/why/how + recommended action), streamed
-live to operator/manager/PM dashboards and rolled up into an end-of-survey
-PDF report.
-
-This is a rebuild, not an extension, of an earlier prototype (see
-[`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) for why) — three copies of the same
-script with no shared contracts is not something you extend, it's something
-you replace.
-
-## Contents
-
-- [What is this, really?](#what-is-this-really)
-- [Why it's built this way](#why-its-built-this-way)
-- [Architecture](#architecture)
-- [The 9-class taxonomy](#the-9-class-taxonomy)
-- [Project layout](#project-layout)
-- [Getting started](#getting-started)
-- [Configuration](#configuration)
-- [Running the API server](#running-the-api-server)
-- [Running the dashboard](#running-the-dashboard)
-- [Running GPR Studio](#running-gpr-studio)
-- [Synthetic training data](#synthetic-training-data)
-- [Generating a report](#generating-a-report)
-- [Heartbeat scripts](#heartbeat-scripts)
-- [Testing](#testing)
-- [Project status](#project-status)
-- [Known limitations](#known-limitations)
-
-## Why it's built this way
-
-Three design decisions shape everything else in this repo:
-
-1. **The source seam.** Nothing is known yet about the real edge device —
-   protocol, whether it streams live or exports files, whether depth/position
-   are calibrated. So everything upstream of `sources/` and `parsers/` is
-   written against a small, fixed contract (`ScanFrame`, `SourceCapabilities`,
-   the `ScanSource` ABC) and genuinely does not know or care which concrete
-   source produced a frame. When the real device spec eventually arrives,
-   wiring it in should only ever touch `sources/` — if it doesn't, the seam
-   has failed and needs fixing, not working around.
-
-2. **Never fabricate a value.** Every field in `Evidence` that depends on
-   calibration (depth, position, amplitude) carries its own confidence label:
-   `"calibrated"`, `"estimated"`, or `"unavailable"`. A value is `None` if
-   and only if its confidence is `"unavailable"` — enforced at the dataclass
-   level, not just by convention. A plausible-looking number is worse than no
-   number at all, because it looks like a measurement. This shows up
-   everywhere downstream too: the LLM reasoning prompt never states an
-   "estimated" figure as if it were fact, the dashboard renders `unavailable`
-   in muted italics instead of a bare `0`, and the PDF report does the same.
-
-3. **The fast path never waits on reasoning.** A detection becomes a
-   `Finding` and is persisted and emitted (`finding.created`) immediately —
-   risk scoring is fast and local. The LLM call is a *second*, asynchronous
-   pass: it runs in the background, updates the same `Finding` when it
-   completes, and emits again (`finding.reasoned`). A `Finding` must survive
-   and remain useful even if reasoning never completes — no trained model, no
-   API key, and no network are hard requirements for the core pipeline to
-   produce real output.
-
-## Architecture
-
-`pipeline/orchestrator.py` drives a linear per-frame pipeline, then splits
-into a fast path (persist + emit immediately) and a slow, asynchronous
-reasoning path that updates the same finding later:
-
-```
-sources/ -> parsers/ -> preprocess/ -> detect/ -> evidence/ -> risk/
-                                                                  |
-                                                  emit "finding.created"
-                                                                  v
-                                                            store/ (Postgres)
-                                                                  ^
-                                                                  |
-                                                  emit "finding.reasoned"
-                                                                  |
-                                                       reason/ (Groq, async)
-```
-
-Everything else reads from the store rather than sitting in that pipeline
-directly:
-
-```
-store/ -> api/ (FastAPI + WebSocket) -> dashboard/ (React, 3 role views)
-store/ -> reports/ (end-of-survey PDF)
-```
-
-`pipeline/orchestrator.py` is where every package upstream of it meets for
-the first time: it pulls frames from a `ScanSource`, runs them through
-preprocess → detect → evidence → risk, persists and emits the fast-path
-result, then dispatches reasoning as a background `asyncio.Task` that
-updates the store and emits again when it lands.
-
-## The 9-class taxonomy
-
-The detection model looks for 9 specific patterns in a scan. In plain terms:
-a buried void (**cavities**), something long and straight like a pipe or
-cable (**elongated_linear_target**), a pipe crossing near another buried
-object (**intersecting_linear_and_point_reflector**), a strong single
-reflection typical of metal or a large solid object
-(**strong_high_contrast_reflector**), several separate small objects close
-together (**multiple_point_reflectors**), a faint, uncertain single-object
-signal (**low_snr_point_reflector**, "SNR" = signal-to-noise ratio — how
-much the real signal stands out from background noise), a messy area with
-many overlapping signals (**cluttered_multi_target**), an area where the
-soil itself looks disturbed rather than a distinct object
-(**disturbed_zone**), and a clean, unambiguous single-object signal
-(**clear_point_reflector**). These are the exact class names used in the
-code and config:
-
-```
-cavities                                    elongated_linear_target
-intersecting_linear_and_point_reflector     strong_high_contrast_reflector
-multiple_point_reflectors                   low_snr_point_reflector
-cluttered_multi_target                      disturbed_zone
-clear_point_reflector
-```
-
-This supersedes the coarser class set used by the original prototype (see
-`docs/PRIOR_ART.md`) — pseudo-labelled into finer-grained classes. One
-consequence: `risk.escalation.utility_classes` in `config.yaml` (which
-classes count as "utility-like buried infrastructure" for the
-cavities-plus-utility escalation rule) is a judgement call under the new
-taxonomy, since the original "utilities" class no longer exists as such —
-worth a domain-expert sanity check before relying on it operationally.
-
-## Project layout
-
-```
-core/        contracts.py, config.py — the types and config everything else depends on
-sources/     ScanSource ABC + replay/edge_gateway/direct_device implementations
-parsers/     file-format registry (extension -> parser), e.g. image.py
-preprocess/  enhance.py — bilateral filter, CLAHE, optional NL-means
-detect/      model.py — YOLOv8 inference wrapper
-render/      bscan.py — traces -> normalised image (uncalibrated, logs as such)
-evidence/    extract.py — Detection + ScanFrame + SourceCapabilities -> Evidence
-risk/        score.py — weighted score, thresholds, escalation rules
-reason/      schema.py, engine.py (Groq), prompts/ — v1_finding.txt (pipeline), v1_pick.txt (Studio)
-store/       Store interface, postgres_store.py, auth_store.py (logins) — no SQL outside this package
-pipeline/    orchestrator.py — fast path emits immediately, reasoning is async
-api/         server.py (FastAPI + WebSocket), survey_manager.py, connection_manager.py, schemas.py
-reports/     generate.py — end-of-survey PDF with confidence-derived caveats
-dashboard/   React + TS + Vite, three role views — separate npm project
-studio/      GPR Studio — interpretation workstation for recorded lines (own FastAPI app + static UI);
-             interpret.py bridges a picked target into reason/ for a plain-language reading
-reference/   confirmed-hyperbola library cut from the company's survey deliverable sheets
-simulate/    synthetic training data: random scenes -> gprMax (in Docker) -> YOLO dataset
-scripts/     heartbeat scripts — run real (or replay) data through each layer end-to-end
-tests/       mirrors the package layout, 734 tests (+1 expected failure documenting an open issue)
-docs/        PRIOR_ART.md (why this was rebuilt), INTEGRATION.md (written once hardware answers arrive)
-```
-
-Every package above `sources/`/`parsers/` only ever imports `core.contracts`
-types from below it — there's no back-reference from, say, `risk/` into
-`detect/`.
+- **Never fabricate a value.** Every depth, position and amplitude is labelled `calibrated`,
+  `estimated` or `unavailable`. A missing number stays missing.
+- **The source seam.** Everything downstream is written against one `ScanSource` interface, so a
+  replayed file, a streaming gateway or a direct device read are interchangeable by config.
+- **The fast path never waits on the LLM.** Detections are stored and broadcast first; reasoning
+  arrives later and is optional.
+- **A human signs off.** The assistant can only refer to targets the software measured, and nothing
+  it says is final until a supervisor decides.
 
 ## Getting started
 
-Requires Python 3.12+. Managed with [`uv`](https://docs.astral.sh/uv/).
+Requires Python 3.12+ and [`uv`](https://docs.astral.sh/uv/). Storage and sign-in use Postgres,
+started from `compose.yaml`.
 
 ```bash
-uv sync --all-extras         # dev, detector, sim (h5py) and build (PyInstaller); or: pip install -e ".[dev,sim,build]"
-# A plain `uv sync` or `uv run` keeps only the extras it is given and removes the rest from .venv,
-# which breaks the simulation tests (h5py) and app packaging (PyInstaller).
-cp .env.example .env         # fill in GROQ_API_KEY (optional — see below)
-
-# activate the venv directly if not using `uv run`:
-source .venv/bin/activate    # macOS/Linux
-.venv\Scripts\activate       # Windows
-
-pytest                       # 758 tests, should all pass
+uv sync --all-extras          # or: pip install -e ".[dev,sim,build]"
+cp .env.example .env          # GROQ_API_KEY is optional; set the Postgres password and URLs
+docker compose up -d          # Postgres on 127.0.0.1
+python -m studio.users        # create a sign-in account
+python -m studio              # GPR Studio at http://127.0.0.1:8500
+pytest                        # ~1,300 tests; the storage and sign-in tests need Postgres running
 ```
 
-Nothing above requires trained YOLO weights or a Groq API key — both are
-optional. Without weights, `detect/model.py` raises a well-typed
-`ModelNotFoundError` that the orchestrator catches per-frame (the frame's
-metadata is still persisted, detection is just skipped for that frame).
-Without `GROQ_API_KEY`, the reasoning engine is simply not constructed and
-every `Finding` stays on the fast path only; GPR Studio's Interpretation panel
-answers 503 saying exactly which key is missing, rather than failing quietly. Both are the *designed*
-degraded path, not a bug — see the heartbeat scripts below for it in action.
+The live API runs with `python -m uvicorn api.server:app`, and the dashboard with
+`npm install && npm run dev` inside `dashboard/`. Without a Groq key the assistant answers 503 and
+says why; without trained weights detection is skipped per frame. Both are designed paths, not
+failures.
 
-This is developed on macOS but built to run on whatever machine the
-deployment target ends up being (Windows or Linux, not yet confirmed):
-`pathlib.Path` throughout (no hardcoded path separators or absolute paths),
-no forced compute device (`torch`/`ultralytics` auto-detect CUDA/CPU — no
-macOS-only MPS assumption anywhere), and only dependencies with
-cross-platform wheels.
+## Limits, stated plainly
 
-## Configuration
+- **No trained detector on real lines.** No labelled radar data exists, so detection on real
+  data is classical signal processing (hyperbola fitting) mapped to a 9-class rule-based taxonomy.
+  The synthetic-data detector has not been validated on real ground.
+- **Utility type can't be read from radar alone.** Output gives depth plus a hypothesis of what the
+  object could be, never a confirmed identity.
+- **Onboard GPS was unreliable** on three of four survey lines, so lines are placed by chainage and
+  surveyed reference points instead.
+- **Live hardware isn't wired yet.** The streaming and direct-device sources are structurally in
+  place but wait on the device protocol.
 
-Everything tunable lives in [`config.yaml`](config.yaml) — detection
-thresholds, enhancement parameters, risk weights and escalation rules, the
-reasoning model and prompt version, source selection, latency targets, the
-storage backend, and the API's CORS allowlist. `core/config.py` fails loudly
-on anything missing — there are no silent defaults scattered through the
-code, so a bad or incomplete config is caught at startup, not at some
-downstream call site.
+## Stack
 
-Switching the active data source is a one-line config change
-(`source.type: replay | edge_gateway | direct_device`), not a code change —
-that's the whole point of the source seam.
-
-## Running the API server
-
-```bash
-.venv/bin/python -m uvicorn api.server:app --reload   # default: http://127.0.0.1:8000
-.venv\Scripts\python -m uvicorn api.server:app --reload   # Windows
-```
-
-| Method | Path                          | Description                                      |
-|--------|-------------------------------|---------------------------------------------------|
-| GET    | `/surveys`                    | List every survey this server has run             |
-| POST   | `/surveys/{survey_id}/start`  | Start a survey against the configured source       |
-| POST   | `/surveys/{survey_id}/stop`   | Stop a running survey                              |
-| GET    | `/surveys/{survey_id}/findings` | All findings for one survey                      |
-| GET    | `/surveys/{survey_id}/summary`  | Aggregate stats (counts by risk level and class) |
-| GET    | `/lines/{line_id}/findings`   | Findings for one physical location, across *every* survey that covered it |
-| WS     | `/ws/live`                    | Live feed of `finding.created` / `finding.reasoned` events |
-
-There's no authentication today — an accepted internal-tool trust model, not
-an oversight. CORS is a real allowlist (`config.yaml`'s `api.cors_origins`),
-not a wildcard, since with no auth the browser's same-origin policy is the
-only thing preventing an unrelated webpage from reaching this API through an
-operator's own browser.
-
-## Running the dashboard
-
-```bash
-cd dashboard
-npm install
-npm run dev                  # http://localhost:5173
-npm test                     # Vitest unit tests, 63 tests
-npm run build                # production build (tsc + vite build)
-```
-
-A separate npm project (not part of the Python package), dependency-light by
-design — native `fetch`/`WebSocket`, no state-management or data-fetching
-library. Three routed views:
-
-- **`/operator`** — start/stop a survey, watch a live append-only feed of
-  findings as they're detected and reasoned.
-- **`/manager`** — browse every survey (running or finished), drill into
-  one's summary and full findings table.
-- **`/pm`** — cross-survey history for one physical line (`line_id`): how has
-  this location trended across every time it's been surveyed.
-
-Set `VITE_API_BASE_URL` in `dashboard/.env` if the API isn't on the default
-`http://127.0.0.1:8000`. Run the API server first — the dashboard has
-nothing to show without it.
-
-## Running GPR Studio
-
-```bash
-.venv/bin/python -m studio                  # http://127.0.0.1:8500
-.venv/bin/python -m studio path/to/jobs     # point it at a different dataset folder
-# Windows: .venv\Scripts\python -m studio
-```
-
-A desktop post-processing workstation for recorded SPR lines, laid out the way
-commercial GPR packages (Radar Studio, RADAN, ReflexW) are: project tree on the
-left, radargram canvas with distance and depth rulers in the middle, an A-scan
-strip and cursor readout underneath, processing and interpretation panels on the
-right. It is separate from the dashboard above — the dashboard watches surveys
-while they run; Studio opens a finished line and works it.
-
-- **Processing chain** — time-zero, dewow, background removal, band-pass,
-  Kirchhoff migration, gain (AGC / linear / exponential), stacking. The run
-  order is fixed and the panel lists steps in that order. Every change re-runs
-  the chain from the raw traces.
-- **Display** — five palettes (greyscale, inverted, seismic, rainbow, amber),
-  contrast, zoom and pan. Scaling is nearest-neighbour only, so every pixel is
-  a real sample.
-- **Hyperbola tool** — drag a box around a target. The fit measures velocity
-  from the curve's shape and shows the implied permittivity next to the one in
-  the file header, with a verdict on whether they agree. A slider adjusts the
-  velocity by eye.
-- **Targets** — save picks with their depth *and* where the velocity came from
-  (measured / set by hand / from header). The CSV export carries that on every row.
-- **Interpretation** — select a target and ask what it is. The measured half is
-  computed here: a taxonomy class from `detect/refine.py` with the rule behind it,
-  depth with its provenance, and risk across the whole line. The written half —
-  what / where / why / confidence / recommended action — comes from Groq
-  (`reason/engine.py`), and the exact evidence the model was given is shown
-  underneath so the words can be checked against it. A target measured with the
-  Hyperbola tool reports **calibrated** depth: the velocity came from that
-  target's own curve, not the file header. Needs `GROQ_API_KEY` in `.env`.
-- **Candidates** — overlays the Phase-1 detector's boxes and shape diagnoses
-  (read-only).
-- **Signature library** — the 16 confirmed hyperbolas from the company's
-  deliverable sheets (`reference/hyperbolas/`), one click from the canvas.
-
-Link straight to a line with `?job=Job_0696&channel=RAD`. Shortcuts: `H` pan,
-`P` pick, `V` hyperbola, `M` measure, `F` fit to window, `Esc` clear.
-
-Studio replaces `scripts/spr_viewer_server.py` for viewing; that script is
-still the only way to *draw* new candidate boxes.
-
-## Synthetic training data
-
-There are no labelled B-scans, so the detector is trained on simulated ones first. We place
-buried objects in random scenes matched to this site, simulate each survey line with
-gprMax (a physics simulator, run in Docker), and get exact labels for free. The detector
-learns **3 shapes** (hyperbola, linear reflector, disturbed or void area). The live
-pipeline then turns each shape into one of the 9 taxonomy classes from measurements
-(`detect/refine.py`), so risk scoring, reasoning and reports are unchanged.
-
-```bash
-docker build -t gpr-analyzer-gprmax:950d0e19 simulate/docker
-.venv/bin/python -m simulate generate --runs sim_runs/batch1 --count 30 --seed 1
-.venv/bin/python -m simulate run      --runs sim_runs/batch1        # ~55 min per scene on a Mac CPU
-.venv/bin/python -m simulate build    --runs sim_runs/batch1 --out datasets/synthetic/batch1
-.venv/bin/python -m simulate validate --runs sim_runs/batch1        # cavity rule vs known voids/trenches
-.venv/bin/python -m detect.train --data datasets/synthetic/batch1/data.yaml --epochs 100
-```
-
-`docs/SYNTHETIC_DATA.md` has the details: which instrument constants were measured from
-the real lines, the stated assumptions, the cost, and the GPL boundary around gprMax.
-Training never replaces `weights/best.pt` unless you pass `--install`.
-
-## Generating a report
-
-```python
-from reports.generate import generate_report
-from store.database import database_url
-from store.postgres_store import PostgresStore
-
-store = PostgresStore(database_url())  # DATABASE_URL from .env; docker compose up -d
-generate_report("survey-id", store, "output/survey-id.pdf")
-```
-
-Produces a landscape-orientation PDF: a summary table (total findings, by
-risk level, by class), a confidence-caveats section (a per-field
-calibrated/estimated/unavailable breakdown across every finding — derived
-from the findings themselves rather than a separate stored capabilities
-record), and the full findings table sorted highest-risk-first. A survey
-with zero findings still produces a real, honest PDF stating that.
-
-## Heartbeat scripts
-
-Each layer has a script under [`scripts/`](scripts/) that runs it against
-real (or replayed) data end-to-end — useful for confirming a layer actually
-works, or as a template for wiring in the next one:
-
-| Script | What it proves |
-|---|---|
-| `replay_heartbeat.py` | `ReplaySource` alone: plays back a fixture directory as `ScanFrame`s. |
-| `pipeline_heartbeat.py` | preprocess → detect → evidence → risk, called directly (no orchestrator). |
-| `orchestrator_heartbeat.py` | The full async orchestrator against replayed data, degrading gracefully with no trained weights and no API key. |
-| `api_heartbeat.py` | The FastAPI server as a real subprocess with a real external WebSocket client — not the in-process TestClient. |
-| `report_heartbeat.py` | Runs the orchestrator to populate a real store, then generates a real PDF from it. |
-
-```bash
-.venv/bin/python scripts/orchestrator_heartbeat.py
-```
-
-## Testing
-
-```bash
-pytest                                                     # 349 tests
-pytest --cov=core --cov=sources --cov=parsers --cov=preprocess \
-       --cov=detect --cov=render --cov=evidence --cov=risk \
-       --cov=reason --cov=store --cov=pipeline --cov=api --cov=reports
-```
-
-98% line coverage across the Python packages (3566 statements, 83 missed) — but
-the coverage number itself isn't the point. Every session
-of this project's development ran mutation testing (deliberately break a
-line, confirm the test suite actually fails, then revert) rather than
-trusting coverage percentage alone, and it found real gaps almost every
-time — the kind where a fixture varies multiple fields together and hides a
-column-swap bug, or an assertion checks "not None" instead of an exact
-value. `ruff` and `mypy` are clean. The uncovered lines are concentrated in the newest
-code — `studio/server.py` (88%) and `studio/session.py` (91%) most of all — which
-is exactly where the mutation-testing discipline above has not yet been applied.
-
-## Project status
-
-Sessions 0–9 of the original build sequence are complete, reviewed, and
-gated — full detail (including every bug found and fixed along the way) in
-[`CLAUDE.md`](CLAUDE.md). In short: core contracts and config, the source
-abstraction, preprocessing, YOLOv8 detection, evidence extraction, risk
-scoring, LLM reasoning, Postgres storage, the async orchestrator, the
-FastAPI/WebSocket API, the dashboard, and PDF reporting are all built and
-tested.
-
-**Session 10 (hardware integration) is blocked**, not next-in-queue: it
-requires real device specs (protocol, streaming vs. file export, calibration
-details) that haven't been provided yet, and guessing them is explicitly
-against this project's own source-seam rule. `sources/edge_gateway.py` and
-`sources/direct_device.py` are structurally wired into the source factory
-already — `capabilities()` returns honest conservative values — but
-`frames()` raises `NotImplementedError` until a real spec arrives.
-
-## Known limitations
-
-- **No authentication anywhere in the API.** Deliberate for now (internal
-  tool, single trusted deployment) — would need real work before this is
-  reachable from anywhere untrusted.
-- **`detect/model.py`'s `YOLO(...)` does an unrestricted `torch.load()`** —
-  the standard pickle deserialization surface. Low risk today (weights path
-  only ever comes from trusted local config, and no real weights exist yet),
-  but worth revisiting (`ULTRALYTICS_SAFE_LOAD`) before a real checkpoint is
-  trained and deployed.
-- **The dashboard's live feed can't merge `finding.created`/`finding.reasoned`
-  events for the same finding** — the WebSocket payload doesn't carry a
-  storage-layer ID (by design: `Finding` is a pure domain object). It shows
-  both events as separate log entries instead. Fixable in a small, low-risk
-  follow-up if a merged view is ever needed.
-- **Reports aren't wired into the API yet** — `reports/generate.py` is built
-  and fully tested standalone, but there's no `/surveys/{id}/report`
-  endpoint calling it yet.
-- **GPR Studio has no authentication either.** It binds to `127.0.0.1` only. Saves
-  to `annotations/<job>/` are locked and atomic within the Studio's process, but two
-  *separate* processes writing the same job (say the Studio and the old
-  `scripts/spr_viewer_server.py` at once) could still overwrite each other. That's fine
-  for one interpreter per machine; it needs a real store before it's shared.
-- **No trained detector yet.** The 3-shape detector's pipeline is built and tested end to
-  end, but training data has to be simulated first (about 55 minutes per scene on a Mac
-  CPU; see `docs/SYNTHETIC_DATA.md`). Until `weights/best.pt` exists, detection reports
-  "model not found" as designed.
-- **The cavity call is unvalidated.** `detect/refine.py` calls a disturbed area a
-  `cavities` finding when its top echo keeps the direct wave's polarity. That's standard
-  interpretation practice, but not yet checked against known voids on this instrument.
-- **Synthetic label boxes are unreliable on crowded scenes.** Each box is the extent of an
-  object's echo above 15% of its own peak. Where hyperbolas overlap, or a pipe's limb runs
-  along a slab's echo, boxes grow too wide, and at unity gain many reach the bottom of the
-  record. Clear, isolated targets are boxed well. How a box should be defined is an open
-  design question; see `docs/SYNTHETIC_DATA.md`.
-- **Synthetic ground is cleaner than real ground.** The simulated scenes add stones and
-  broken-up trenches, but real soil is messier. Accuracy on real lines can't be measured
-  until labelled real data exists (company questions #1 and #6).
+Python 3.12 · FastAPI · WebSocket · Postgres (psycopg 3) · OpenCV · NumPy · Groq (`gpt-oss`) ·
+pdfplumber + OCR · pyproj · ezdxf · reportlab · gprMax (Docker) · YOLOv8 · React + TypeScript + Vite
+· Leaflet
